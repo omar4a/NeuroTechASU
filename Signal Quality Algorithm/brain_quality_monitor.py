@@ -72,12 +72,12 @@ class RollingQualityBuffer:
                 states.append(ChannelState(label=label, good=None, display_uv=None))
                 continue
 
-            metrics = self.engine.process_window(raw_window)
+            metrics = self.engine.process_window(label, raw_window)
             states.append(
                 ChannelState(
                     label=label,
                     good=bool(metrics["is_good"]),
-                    display_uv=float(metrics["v_pp"]),
+                    display_uv=float(metrics["display_uv"]),
                 )
             )
 
