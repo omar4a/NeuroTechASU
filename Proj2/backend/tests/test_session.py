@@ -219,6 +219,7 @@ async def test_trigger_chatgpt_reply_sends_command_and_grows_history():
         typewriter_interval_ms=0,            # keep the test fast
         ssvep_timeout=1.0,
         demo_context_override="demo",
+        continuation_enabled=False,          # test B-mode behavior isolation
     )
     await session.on_event({"event": "init", "context": "chat", "timestamp": 0})
     await asyncio.sleep(0.01)
@@ -320,6 +321,7 @@ async def test_predictions_see_chatgpt_reply_as_conversation_context():
         typewriter_interval_ms=0,
         ssvep_timeout=1.0,
         demo_context_override="base-ctx",
+        continuation_enabled=False,               # isolate conversation-aware behaviour
     )
     await session.on_event({"event": "init", "context": "chat", "timestamp": 0})
     await asyncio.sleep(0.01)
@@ -361,4 +363,172 @@ async def test_demo_context_is_injected_when_no_override():
     # The specialized BR41N.IO persona must be in the context string.
     assert "BR41N.IO" in session.context
     assert "Ain Shams" in session.context
+    await session.close()
+
+
+# ---------------------------------------------------------------------------
+# Continuation mode (Option A) + timeout fallback to P300 — trial&error.md
+# 2026-04-20. These tests verify the hybrid flow that we plan to demo.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_continuation_after_first_word_calls_predict_with_empty_prefix():
+    """After the first word commits, the NEXT predict_words call must receive
+    prefix='' and sentence=<word-so-far> — that's what triggers the
+    LLM-continuation path in speller_api's prompt."""
+    send = _Recorder()
+    seen_calls: list[dict] = []
+
+    def predict(*, prefix, context, sentence):
+        seen_calls.append({"prefix": prefix, "sentence": sentence})
+        return ["alpha", "beta", "gamma"]  # content irrelevant
+
+    session = SpellerSession(
+        send=send,
+        ssvep=MockSSVEPConsumer([10.0, 12.0]),   # word 1 (alpha), word 2 (beta)
+        predict_fn=predict,
+        prefix_auto_commit=2,
+        typewriter_interval_ms=0,
+        ssvep_timeout=1.0,
+        demo_context_override="demo",
+        continuation_enabled=True,
+    )
+    await session.on_event({"event": "init", "context": "chat", "timestamp": 0})
+    await asyncio.sleep(0.01)
+
+    session.feed_p300_char("H")
+    session.feed_p300_char("E")
+
+    # Wait for two predict calls: prefix-seeded then continuation-seeded.
+    for _ in range(80):
+        await asyncio.sleep(0.02)
+        if len(seen_calls) >= 2:
+            break
+
+    assert len(seen_calls) >= 2
+    # First call was the prefix-seeded one
+    assert seen_calls[0]["prefix"] == "he"
+    assert seen_calls[0]["sentence"] == ""
+    # Second call was the continuation — empty prefix, sentence populated
+    assert seen_calls[1]["prefix"] == ""
+    assert "alpha" in seen_calls[1]["sentence"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_continuation_ssvep_timeout_falls_back_to_p300():
+    """If the SSVEP classifier doesn't lock within the timeout, the session
+    drops back to P300 flashing for a fresh prefix entry — the
+    no-4th-frequency escape hatch."""
+    send = _Recorder()
+    session = SpellerSession(
+        send=send,
+        ssvep=MockSSVEPConsumer([10.0]),          # one pick; continuation times out
+        predict_fn=_predict_factory(["hello", "hope", "help"]),
+        prefix_auto_commit=2,
+        typewriter_interval_ms=0,
+        ssvep_timeout=0.3,                        # short for test speed
+        demo_context_override="demo",
+        continuation_enabled=True,
+    )
+    await session.on_event({"event": "init", "context": "chat", "timestamp": 0})
+    await asyncio.sleep(0.01)
+
+    session.feed_p300_char("H")
+    session.feed_p300_char("E")
+
+    # Wait for: cycle-1 commit → continuation → timeout → fallback start_flashing.
+    for _ in range(120):
+        await asyncio.sleep(0.02)
+        if send.commands().count("start_flashing") >= 2:
+            break
+
+    cmds = send.commands()
+    # Two start_flashing events: initial prefix, and post-timeout fallback.
+    assert cmds.count("start_flashing") >= 2, f"saw only {cmds}"
+    # Two start_ssvep + two stop_ssvep: the successful pick and the timeout.
+    assert cmds.count("start_ssvep") >= 2
+    assert cmds.count("stop_ssvep") >= 2
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_ssvep_reset_called_between_cycles():
+    """The SSVEP consumer's reset() should fire each time a cycle ends —
+    either on commit or on timeout — so stale predictions from the previous
+    window can't leak into the next one on real hardware."""
+    reset_calls = {"n": 0}
+
+    class TrackingSSVEP(MockSSVEPConsumer):
+        async def reset(self):
+            reset_calls["n"] += 1
+            await super().reset()
+
+    ssvep = TrackingSSVEP([10.0])
+    send = _Recorder()
+    session = SpellerSession(
+        send=send,
+        ssvep=ssvep,
+        predict_fn=_predict_factory(["a", "b", "c"]),
+        prefix_auto_commit=2,
+        typewriter_interval_ms=0,
+        ssvep_timeout=0.2,
+        demo_context_override="demo",
+        continuation_enabled=True,
+    )
+    await session.on_event({"event": "init", "context": "chat", "timestamp": 0})
+    await asyncio.sleep(0.01)
+
+    session.feed_p300_char("H")
+    session.feed_p300_char("E")
+
+    # Two cycles expected: commit (reset) then continuation timeout (reset).
+    for _ in range(120):
+        await asyncio.sleep(0.02)
+        if reset_calls["n"] >= 2:
+            break
+
+    assert reset_calls["n"] >= 2, (
+        f"reset was called {reset_calls['n']}× — expected ≥2 "
+        "(once after commit, once after continuation timeout)"
+    )
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_continuation_disabled_returns_to_p300_each_word():
+    """Legacy Option B behaviour is still available via continuation_enabled=False."""
+    send = _Recorder()
+    session = SpellerSession(
+        send=send,
+        ssvep=MockSSVEPConsumer([10.0]),
+        predict_fn=_predict_factory(["hello", "hope", "help"]),
+        prefix_auto_commit=2,
+        typewriter_interval_ms=0,
+        ssvep_timeout=0.3,
+        demo_context_override="demo",
+        continuation_enabled=False,
+    )
+    await session.on_event({"event": "init", "context": "chat", "timestamp": 0})
+    await asyncio.sleep(0.01)
+
+    session.feed_p300_char("H")
+    session.feed_p300_char("E")
+
+    # Watch for the 2nd start_flashing (post-commit, since continuation is off).
+    for _ in range(80):
+        await asyncio.sleep(0.02)
+        if send.commands().count("start_flashing") >= 2:
+            break
+
+    cmds = send.commands()
+    assert cmds.count("start_flashing") >= 2
+    # In B-mode we see exactly 1 predict + 1 ssvep cycle before the next flashing.
+    # The 2nd start_flashing should follow stop_ssvep with no extra predict in between.
+    ssvep_idx = cmds.index("stop_ssvep")
+    next_flashing_idx = cmds.index("start_flashing", ssvep_idx)
+    between = cmds[ssvep_idx + 1 : next_flashing_idx]
+    assert "update_predictions" not in between, (
+        f"B-mode must not call predict between stop_ssvep and start_flashing; saw {between}"
+    )
     await session.close()

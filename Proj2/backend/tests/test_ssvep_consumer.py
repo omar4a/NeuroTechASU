@@ -28,6 +28,21 @@ async def test_mock_timeout_does_not_raise():
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_mock_reset_is_noop():
+    """Documented semantics: MockSSVEPConsumer.reset() is a no-op — the
+    preprogrammed queue IS the test script, so resetting it would discard
+    the rest of the scripted sequence. Tests that need to observe reset()
+    being called should subclass and instrument."""
+    consumer = MockSSVEPConsumer([10.0, 12.0, 15.0])
+    await consumer.start()
+    assert await consumer.next_prediction(timeout=0.5) == 10.0
+    await consumer.reset()                       # does NOT drop the queue
+    assert await consumer.next_prediction(timeout=0.5) == 12.0
+    assert await consumer.next_prediction(timeout=0.5) == 15.0
+    await consumer.stop()
+
+
 def test_real_upstream_path_resolves_relative_to_repo():
     """Sanity: RealSSVEPConsumer expects the upstream file at a path relative
     to the repo root. We don't instantiate the real streamer (needs hardware);

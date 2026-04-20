@@ -51,6 +51,9 @@ async def _ws_handler(ws):
             send=lambda msg, _ws=ws: _ws.send(json.dumps(msg)),
             ssvep=_make_ssvep(),
             prefix_auto_commit=int(os.environ.get("SPELLER_PREFIX_LENGTH", "2")),
+            continuation_enabled=os.environ.get(
+                "SPELLER_CONTINUATION_MODE", "true"
+            ).lower() not in ("0", "false", "no"),
         )
         _current_session = session
 

@@ -50,6 +50,7 @@ class SpellerSession:
         ssvep_timeout: float = 30.0,
         typewriter_interval_ms: int = TYPEWRITER_INTERVAL_MS,
         demo_context_override: str | None = None,
+        continuation_enabled: bool = True,
     ):
         self._send = send
         self._ssvep = ssvep
@@ -59,6 +60,7 @@ class SpellerSession:
         self._ssvep_timeout = ssvep_timeout
         self._typewriter_s = max(0, typewriter_interval_ms) / 1000.0
         self._demo_context_override = demo_context_override
+        self._continuation_enabled = continuation_enabled
 
         self.state: str = S_IDLE
         self.context: str = ""               # the predict_words context string
@@ -170,25 +172,73 @@ class SpellerSession:
         freq = await self._ssvep.next_prediction(timeout=self._ssvep_timeout)
         if self._closed.is_set() or self.state != S_AWAITING_SSVEP:
             return
-        idx = FREQ_TO_WORD_IDX.get(float(freq)) if freq is not None else None
+        if freq is None:
+            # Timeout: classifier didn't confidently lock on a target. This is
+            # the intended escape hatch — subject looked away from the 3
+            # SSVEP boxes. Fall back to P300 for a fresh prefix entry. See
+            # trial&error.md on why this requires classifier reset + threshold
+            # filtering upstream to actually fire on real hardware.
+            logger.info("ssvep timeout (no confident pick); falling back to P300")
+            await self._send(protocol.stop_ssvep())
+            await self._ssvep_reset_safe()
+            await self._transition_to_prefix()
+            return
+        idx = FREQ_TO_WORD_IDX.get(float(freq))
         if idx is None or idx >= len(self.predictions):
             logger.warning(
-                "ssvep returned %r (idx=%r); cannot commit; restarting prefix cycle",
+                "ssvep returned %r (idx=%r); cannot commit; falling back to P300",
                 freq, idx,
             )
             await self._send(protocol.stop_ssvep())
+            await self._ssvep_reset_safe()
             await self._transition_to_prefix()
             return
         selected = self.predictions[idx]
         await self._send(protocol.stop_ssvep())
-        # Delete live-typed prefix, then type the full selected word with a
-        # typewriter pace so the subject's "thought" materialises dramatically.
+        # Delete live-typed prefix (if any — continuation picks have no
+        # prefix), then type the full selected word with a typewriter pace.
         if self.prefix:
             await self._send(protocol.backspace(len(self.prefix)))
         await self._typewrite(selected + " ")
         self.sentence = (self.sentence + " " + selected).strip() + " "
         logger.info("committed %r; sentence now %r", selected, self.sentence)
-        await self._transition_to_prefix()
+        await self._ssvep_reset_safe()
+        if self._continuation_enabled and self.sentence.strip():
+            # Option A: skip P300, go straight to next-word prediction seeded
+            # by the growing sentence.
+            await self._transition_to_continuation()
+        else:
+            await self._transition_to_prefix()
+
+    async def _transition_to_continuation(self) -> None:
+        """After a word commits, predict the NEXT word directly from the
+        sentence-so-far — no P300. If the SSVEP classifier fails to lock in
+        the next cycle (timeout / unmapped), we drop back to _transition_to_
+        prefix() so the subject can type fresh letters."""
+        self.state = S_AWAITING_PREDICTIONS
+        self.prefix = ""
+        words = await get_predictions(
+            prefix="",
+            context=self._conversation_aware_context(),
+            sentence=self.sentence,
+            predict_fn=self._predict_fn,
+        )
+        self.predictions = words
+        await self._send(protocol.update_predictions(words))
+        await self._send(protocol.start_ssvep())
+        self.state = S_AWAITING_SSVEP
+        self._ssvep_task = asyncio.create_task(self._consume_ssvep())
+
+    async def _ssvep_reset_safe(self) -> None:
+        """Call ssvep.reset() if the consumer exposes one. Swallow errors —
+        reset is best-effort hygiene, never demo-blocking."""
+        reset = getattr(self._ssvep, "reset", None)
+        if reset is None:
+            return
+        try:
+            await reset()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("ssvep.reset raised: %s", exc)
 
     def _conversation_aware_context(self) -> str:
         """Enrich the speller context with ChatGPT's most recent reply so the
@@ -220,32 +270,47 @@ class SpellerSession:
     # --- Brain↔ChatGPT send trigger ----------------------------------------
 
     async def trigger_chatgpt_reply(self) -> str | None:
-        """Send the current pending sentence to ChatGPT and stream the reply
-        back via the `chatgpt_reply` command. Operator-driven (HTTP /send).
+        """Send the current pending sentence to ChatGPT and deliver the reply
+        via the `chatgpt_reply` command. Operator-driven (HTTP /send_message).
 
-        Returns the reply string, or None if nothing to send.
+        The full flow:
+          1. Cancel the in-flight SSVEP-consume task so an old, stale
+             prediction can't commit a garbage word against the cleared
+             sentence after the reply arrives (smoke-test bug fix).
+          2. Reset the SSVEP consumer (drop stale queued predictions).
+          3. Tell the frontend to stop both its active display modes.
+          4. Ask ChatGPT with the full conversation history.
+          5. Send the reply.
+          6. Start a fresh P300 prefix cycle — the subject's next utterance
+             is a new turn, not a continuation of the one just sent.
+
+        Returns the reply string, or None if there was nothing to send.
         """
         message = self.sentence.strip()
         if not message:
             logger.info("send triggered but sentence is empty; ignoring")
             return None
-        prior_state = self.state
+        # (1) pause any in-flight cycle
+        if self._ssvep_task is not None and not self._ssvep_task.done():
+            self._ssvep_task.cancel()
+            self._ssvep_task = None
+        # (2) drop stale SSVEP queue / classifier state
+        await self._ssvep_reset_safe()
+        # (3) make the UI idle while we wait for ChatGPT
+        await self._send(protocol.stop_ssvep())
+        await self._send(protocol.stop_flashing())
         self.state = S_AWAITING_REPLY
         self.history.append({"role": "user", "content": message})
         self.sentence = ""
-        try:
-            reply = await ask_chat(self.history, chat_fn=self._chat_fn)
-        finally:
-            # Resume whatever we were doing (usually prefix flashing).
-            if prior_state == S_CLOSED:
-                pass
-            elif prior_state == S_AWAITING_PREFIX:
-                self.state = S_AWAITING_PREFIX
-            else:
-                self.state = prior_state
+        # (4) ask
+        reply = await ask_chat(self.history, chat_fn=self._chat_fn)
         self.history.append({"role": "assistant", "content": reply})
+        # (5) deliver
         await self._send(protocol.chatgpt_reply(reply))
         logger.info("ChatGPT replied %r", reply[:80])
+        # (6) new utterance starts with P300 prefix
+        if not self._closed.is_set():
+            await self._transition_to_prefix()
         return reply
 
     # --- shutdown ------------------------------------------------------------

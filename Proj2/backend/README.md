@@ -59,6 +59,7 @@ speller-backend
 | `SPELLER_HTTP_PORT`    | `8766`    | HTTP port for P300 char injection |
 | `SPELLER_PREFIX_LENGTH`| `2`       | Auto-commit prefix after N P300 chars |
 | `SPELLER_SSVEP_MODE`   | `mock`    | `mock` (preprogrammed 10/12/15) or `real` (Unicorn LSL) |
+| `SPELLER_CONTINUATION_MODE` | `true` | `true`: after first word, skip P300 and offer 3 LLM continuations (Option A). `false`: enter fresh prefix via P300 for every word (Option B). See `trial&error.md`. |
 | `SPELLER_LOG_LEVEL`    | `INFO`    | |
 
 ## Inject a character manually (no P300 needed)

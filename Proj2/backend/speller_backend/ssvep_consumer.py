@@ -33,6 +33,12 @@ class SSVEPConsumer(Protocol):
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def next_prediction(self, timeout: float | None = None) -> float | None: ...
+    async def reset(self) -> None:
+        """Clear any queued / cached prediction state so stale values from a
+        previous cycle don't leak into the next one. See trial&error.md §2026-
+        04-20 on why this is needed for the timeout-based fallback to actually
+        fire on real hardware."""
+        ...
 
 
 class MockSSVEPConsumer:
@@ -53,6 +59,12 @@ class MockSSVEPConsumer:
         if not self._queue:
             return None
         return self._queue.popleft()
+
+    async def reset(self) -> None:
+        # Mock semantics: the preprogrammed queue IS the test script, so
+        # reset is intentionally a no-op. Tests that want to observe reset
+        # being called should subclass and instrument.
+        return None
 
 
 class RealSSVEPConsumer:
@@ -115,3 +127,23 @@ class RealSSVEPConsumer:
             return await asyncio.wait_for(self._queue.get(), timeout=timeout)
         except asyncio.TimeoutError:
             return None
+
+    async def reset(self) -> None:
+        """Drain any pending/stale predictions from upstream.
+
+        The upstream LSLStreamer's majority-voter locks `current_display_pred`
+        once and then emits that value every window — if we don't reset, stale
+        picks from the previous cycle poison the next one. See trial&error.md
+        for the full rationale.
+
+        TODO(hardware day): once upstream `ssvep_realtime.SSVEPClassifier` /
+        `LSLStreamer` exposes a `reset()` that clears `history` and
+        `current_display_pred`, call it here too. For now we only drain the
+        local queue — sufficient if the upstream also stops after our
+        threshold filter rejects low-confidence frames.
+        """
+        while not self._queue.empty():
+            try:
+                self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
