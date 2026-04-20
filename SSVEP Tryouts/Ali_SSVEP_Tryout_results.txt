@@ -1,0 +1,9 @@
+
+=============================================
+    *** SSVEP PILOT SCREENING RESULTS ***
+    Candidate: Ali_SSVEP_Tryout
+=============================================
+Target 10 Hz SNR at ROI (Oz): 12.27
+Target 12 Hz SNR at ROI (Oz): 5.76
+Target 15 Hz SNR at ROI (Oz): 5.61
+=============================================
