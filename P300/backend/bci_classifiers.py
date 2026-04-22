@@ -1,7 +1,6 @@
 import os
 import argparse
 import numpy as np
-import scipy.signal
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -16,18 +15,7 @@ try:
 except ImportError:
     print("Warning: mne or pyriemann not installed.")
 
-def butter_bandpass_filter(data, lowcut, highcut, fs, order=4):
-    """
-    Applies a 1-20 Hz Butterworth bandpass filter to the data.
-    Input data shape expected: (Epochs, Channels, Samples)
-    """
-    nyq = 0.5 * fs
-    low = lowcut / nyq
-    high = highcut / nyq
-    b, a = scipy.signal.butter(order, [low, high], btype='band')
-    # apply over the last axis (samples)
-    y = scipy.signal.filtfilt(b, a, data, axis=-1)
-    return y
+# Pre-processing is handled by data_collection.py via the shared signal_processing module
 
 def evaluate_pipeline(X, y, pipeline, name):
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
@@ -62,36 +50,39 @@ def main():
     unique, counts = np.unique(y, return_counts=True)
     print(f"Class distribution: {dict(zip(unique, counts))}")
 
-    # Preprocessing: Bandpass Filter
-    print("Applying 1-20 Hz bandpass filter...")
-    X_filt = butter_bandpass_filter(X, lowcut=1.0, highcut=20.0, fs=250.0)
-
+    # Preprocessing note
+    print("Dataset is already Bandpass Filtered (0.5-20Hz), Notch Filtered (50Hz), and Baseline Corrected.")
+    
+    # Sweep nfilter values to find optimal spatial filter count
+    # With limited training data, fewer filters reduce overfitting risk
+    nfilter_values = [2, 3, 4]
+    
     # Pipeline A: xDAWN + LDA
     if args.pipeline in ['A', 'Both']:
         print("\n--- Evaluating Pipeline A (xDAWN + LDA) ---")
-        try:
-            # Vectorizer turns (Epochs, Components, Samples) -> (Epochs, Features)
-            pipe_a = make_pipeline(
-                Xdawn(nfilter=3),
-                Vectorizer(),
-                LinearDiscriminantAnalysis()
-            )
-            evaluate_pipeline(X_filt, y, pipe_a, "Pipeline A (xDAWN+LDA)")
-        except Exception as e:
-            print(f"Failed to evaluate Pipeline A: {e}")
+        for nf in nfilter_values:
+            try:
+                pipe_a = make_pipeline(
+                    Xdawn(nfilter=nf),
+                    Vectorizer(),
+                    LinearDiscriminantAnalysis()
+                )
+                evaluate_pipeline(X, y, pipe_a, f"Pipeline A (xDAWN+LDA, nfilter={nf})")
+            except Exception as e:
+                print(f"Failed nfilter={nf}: {e}")
 
     # Pipeline B: Riemannian MDM
     if args.pipeline in ['B', 'Both']:
         print("\n--- Evaluating Pipeline B (Riemannian MDM) ---")
-        try:
-            # MDM pipeline works best when Xdawn is also used to estimate ERPCovariances.
-            pipe_b = make_pipeline(
-                XdawnCovariances(nfilter=3, estimator="oas"),
-                MDM()
-            )
-            evaluate_pipeline(X_filt, y, pipe_b, "Pipeline B (MDM)")
-        except Exception as e:
-            print(f"Failed to evaluate Pipeline B: {e}")
+        for nf in nfilter_values:
+            try:
+                pipe_b = make_pipeline(
+                    XdawnCovariances(nfilter=nf, estimator="oas"),
+                    MDM()
+                )
+                evaluate_pipeline(X, y, pipe_b, f"Pipeline B (MDM, nfilter={nf})")
+            except Exception as e:
+                print(f"Failed nfilter={nf}: {e}")
 
 if __name__ == "__main__":
     main()

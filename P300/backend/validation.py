@@ -1,31 +1,51 @@
+"""
+P300 ERP Validation Visualizer.
+
+Plots the Grand Average ERP waveform at channel Pz, comparing target vs. non-target
+averages. Used to visually verify that a P300 component is present in the data.
+"""
+
+import os
 import numpy as np
 import matplotlib.pyplot as plt
-import mne
+
+from signal_processing import PZ_INDEX, EPOCH_LEN
+
+# Use portable path resolution instead of hardcoded absolute paths
+output_dir = os.path.dirname(os.path.abspath(__file__))
 
 # 1. Load your data
 # Assuming X_train shape is (epochs, channels, timepoints) 
 # Assuming 250Hz sampling rate and 800ms epoch (200 timepoints)
-X = np.load("C:\\Omar\\Education\\NeuroTech_ASU\\P300\\backend\\X_train_v2.npy")
-y = np.load("C:\\Omar\\Education\\NeuroTech_ASU\\P300\\backend\\y_train_v2.npy")
+X = np.load(os.path.join(output_dir, "X_train.npy"))
+y = np.load(os.path.join(output_dir, "y_train.npy"))
 
-# Get the index of the Pz channel (usually channel 4 in your 8-channel array)
-# Update this index if your channel order is different!
-PZ_INDEX = 4 
+# PZ_INDEX imported from signal_processing (shared single source of truth)
 
 # 2. Separate Targets and Non-Targets
+if len(X) == 0:
+    raise ValueError("CRITICAL ERROR: X_train.npy is completely empty (shape is 0). You have not collected any valid data yet! Run data_collection.py and psychopy_speller.py fully before visualizing.")
+
+if len(X.shape) < 3:
+    raise ValueError(f"CRITICAL ERROR: X_train.npy has malformed shape {X.shape}. It should be (Epochs, Channels, Samples). Ensure your training session fully completed successfully.")
+
 targets = X[y == 1]
 nontargets = X[y == 0]
 
 print(f"Total Targets: {len(targets)}")
 print(f"Total Non-Targets: {len(nontargets)}")
 
+if len(targets) == 0:
+    raise ValueError("No Target flashes found in dataset!")
+
 # 3. Calculate the Grand Average for the Pz channel
 # np.mean across the epoch dimension (axis=0)
 target_avg = np.mean(targets[:, PZ_INDEX, :], axis=0)
 nontarget_avg = np.mean(nontargets[:, PZ_INDEX, :], axis=0)
 
-# Create a time axis in milliseconds (e.g., 0 to 800ms)
-times = np.linspace(0, 800, X.shape[2])
+# Create a time axis in milliseconds using shared EPOCH_LEN constant
+epoch_ms = EPOCH_LEN * 1000
+times = np.linspace(0, epoch_ms, X.shape[2])
 
 # 4. Plot it
 plt.figure(figsize=(10, 6))

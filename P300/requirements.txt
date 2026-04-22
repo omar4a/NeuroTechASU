@@ -1,0 +1,22 @@
+# P300 BCI Speller — Python Dependencies
+# Install: pip install -r requirements.txt
+
+# Core scientific stack
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Machine Learning
+scikit-learn>=1.2.0
+
+# BCI / Neuroscience
+mne>=1.4.0
+pyriemann>=0.4
+
+# Lab Streaming Layer
+pylsl>=1.16.0
+
+# Visualization (offline validation only)
+matplotlib>=3.7.0
+
+# UI (install separately — requires specific PsychoPy version)
+# psychopy==2023.2.3

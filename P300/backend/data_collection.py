@@ -1,26 +1,40 @@
+"""
+P300 Training Data Collection Backend.
+
+Connects to:
+  1. Unicorn EEG stream (8ch @ 250Hz) via LSL
+  2. Speller_Markers stream from PsychoPy UI via LSL
+
+Runs two async workers to buffer EEG data and flash markers concurrently.
+On SESSION_END, epochs the continuous data around flash events, applies
+preprocessing + artifact rejection, and saves X_train.npy / y_train.npy.
+"""
+
 import os
+import sys
+# PsychoPy Runner isolates the environment, stripping standard user site-packages.
+# We append the standard Python 3.10 user site (where pyriemann/mne/sklearn live)
+# to sys.path. We APPEND so that PsychoPy's own libraries take priority.
+_user_site = os.path.expanduser(r"~\AppData\Roaming\Python\Python310\site-packages")
+if os.path.isdir(_user_site) and _user_site not in sys.path:
+    sys.path.append(_user_site)
+
 import numpy as np
 import pylsl
 import asyncio
-import websockets
-import json
 
-FS = 250
-EPOCH_LEN = 0.8  # 800 ms
-SAMPLES_PER_EPOCH = int(FS * EPOCH_LEN)
+from signal_processing import (
+    FS, SAMPLES_PER_EPOCH, BASELINE_SAMPLES,
+    apply_preprocessing, reject_artifacts, extract_epoch
+)
+
 
 class DataCollector:
     def __init__(self):
         self.eeg_data = []
         self.eeg_times = []
         self.flash_events = []
-        self.target_word = "TECHNOLOGY"
         self.is_recording = False
-        
-        # Create an LSL stream for our Web UI markers
-        info = pylsl.StreamInfo('Speller_Markers', 'Markers', 1, 0, 'string', 'my_alienware_marker_123')
-        self.marker_outlet = pylsl.StreamOutlet(info)
-        print("LSL Marker Outlet created successfully.")
         
     async def lsl_worker(self, inlet):
         print("Connected to Unicorn stream. Receiving data...")
@@ -39,75 +53,43 @@ class DataCollector:
             if timestamp is not None and marker is not None:
                 # the marker is a list of 1 string e.g., ["FLASH_1_ABCDEF"]
                 m_str = marker[0]
-                if m_str.startswith("FLASH_"):
+                if m_str == "SESSION_END":
+                    print("SESSION_END received. Terminating recording.")
+                    self.is_recording = False
+                    break
+                elif m_str.startswith("FLASH_"):
                     # Extract label 
                     parts = m_str.split("_")
                     if len(parts) >= 3:
                         label = int(parts[1])
                         self.flash_events.append((timestamp, label))
             await asyncio.sleep(0.01)
-            
-    async def ws_handler(self, websocket, path=None):
-        print("Speller UI Connected! Starting data collection...")
-        
-        # 1. Resolve LSL before allowing UI to start
-        print("Resolving Unicorn LSL and Marker streams...")
+
+    async def main_loop(self):
+        print("Resolving LSL Streams...")
         loop = asyncio.get_running_loop()
-        unicorn_streams = await loop.run_in_executor(None, pylsl.resolve_byprop, 'name', 'UnicornRecorderLSLStream', 1, 5.0)
-        marker_streams = await loop.run_in_executor(None, pylsl.resolve_byprop, 'name', 'Speller_Markers', 1, 5.0)
+        unicorn_streams = await loop.run_in_executor(None, pylsl.resolve_byprop, 'name', 'UnicornRecorderLSLStream', 1, 10.0)
+        marker_streams = await loop.run_in_executor(None, pylsl.resolve_byprop, 'name', 'Speller_Markers', 1, 10.0)
         
         if not unicorn_streams:
-            print("ERROR: Could not find Unicorn stream within 5 seconds.")
-            print("Aborting WebSocket session. Please ensure Unicorn Suite is broadcasting first!!!")
+            print("ERROR: Could not find Unicorn stream within 10 seconds.")
             return
             
         if not marker_streams:
-            print("ERROR: Could not find our LSL marker stream. This should not happen!")
+            print("ERROR: Could not find Speller_Markers stream in 10 seconds.")
+            print("Make sure psychopy_speller.py is running.")
             return
             
         inlet = pylsl.StreamInlet(unicorn_streams[0])
         marker_inlet = pylsl.StreamInlet(marker_streams[0])
         
-        # 2. Everything is good, start recording!
         self.is_recording = True
-        lsl_task = asyncio.create_task(self.lsl_worker(inlet))
-        marker_task = asyncio.create_task(self.marker_worker(marker_inlet))
+        print("\n[READY] Recording active. Waiting for UI markers...")
         
-        # Tell UI to begin spelling
-        await websocket.send(json.dumps({
-            "command": "start_spelling",
-            "word": self.target_word
-        }))
-        
-        try:
-            async for message in websocket:
-                data = json.loads(message)
-                event = data.get("event")
-                
-                if event == "experiment_start":
-                    print(f"UI acknowledged experiment start. Target word: {data.get('word')}")
-                    
-                elif event == "flash":
-                    group = data.get("target_group", [])
-                    current_target = data.get("current_target")
-                    
-                    # Target tagging logic
-                    label = 1 if current_target in group else 0
-                    
-                    # Instantly push to LSL Marker outlet
-                    marker_string = f"FLASH_{label}_{''.join(group)}"
-                    self.marker_outlet.push_sample([marker_string], pylsl.local_clock())
-                    print(f"Pushed Marker -> Target: {current_target} | Group: {group} | Tag (y): {label}")
-                    
-                elif event == "experiment_complete":
-                    print("Experiment complete flag received from UI. Concluding session...")
-                    break
-                    
-        except websockets.exceptions.ConnectionClosed:
-            print("UI Disconnected or Experiment finished.")
-            
-        self.is_recording = False
-        await asyncio.gather(lsl_task, marker_task)
+        await asyncio.gather(
+            self.lsl_worker(inlet),
+            self.marker_worker(marker_inlet)
+        )
         
         self.epoch_and_save()
         
@@ -119,23 +101,28 @@ class DataCollector:
             
         X, y = [], []
         time_arr = np.array(self.eeg_times)
-        data_arr = np.array(self.eeg_data) # Format: (Samples, Channels)
+        data_arr = np.array(self.eeg_data)  # Format: (Samples, Channels)
         
         # Keep only the first 8 channels (EEG) from the Unicorn dataset
         data_arr = data_arr[:, :8]
         
+        # Apply preprocessing (Bandpass + Notch) to continuous signal to prevent edge artifacts
+        data_arr = apply_preprocessing(data_arr)
+        
+        rejected_count = 0
         for f_time, label in self.flash_events:
-            idx = np.searchsorted(time_arr, f_time)
+            epoch = extract_epoch(data_arr, time_arr, f_time, apply_baseline=True)
             
-            # Ensure we have enough data past the flash for a full epoch
-            if idx + SAMPLES_PER_EPOCH < len(data_arr):
-                epoch = data_arr[idx : idx + SAMPLES_PER_EPOCH]
-                
-                # Model pipelines generally expect (Epochs, Channels, Samples)
-                epoch = epoch.T
-                
-                X.append(epoch)
-                y.append(label)
+            if epoch is None:
+                continue
+            
+            # Artifact rejection — skip epochs with extreme amplitudes (e.g., blinks)
+            if not reject_artifacts(epoch):
+                rejected_count += 1
+                continue
+            
+            X.append(epoch)
+            y.append(label)
                 
         X = np.array(X)
         y = np.array(y)
@@ -146,15 +133,27 @@ class DataCollector:
         
         np.save(x_path, X)
         np.save(y_path, y)
+        
+        # Save raw continuous data for offline re-epoching with different delay values.
+        # This allows empirical measurement of the true OSCAR delay rather than guessing.
+        raw_dir = os.path.join(output_dir, "raw_session")
+        os.makedirs(raw_dir, exist_ok=True)
+        np.save(os.path.join(raw_dir, "eeg_continuous.npy"), data_arr)  # Already 8ch, preprocessed
+        np.save(os.path.join(raw_dir, "eeg_timestamps.npy"), time_arr)
+        # Flash events: list of (timestamp, label) tuples
+        flash_arr = np.array(self.flash_events, dtype=[('time', 'f8'), ('label', 'i4')])
+        np.save(os.path.join(raw_dir, "flash_events.npy"), flash_arr)
+        print(f"Saved raw session data to {raw_dir}/ for delay calibration.")
+        
         print(f"--- Data Collection Finalized ---")
         print(f"Saved {x_path} (Shape: {X.shape})")
         print(f"Saved {y_path} (Shape: {y.shape})")
+        if rejected_count > 0:
+            print(f"Artifact rejection: {rejected_count} epochs rejected (threshold: {int(ARTIFACT_THRESHOLD_UV)}uV)")
 
 async def main():
     collector = DataCollector()
-    print("Backend WebSocket Server listening on ws://localhost:8765")
-    async with websockets.serve(collector.ws_handler, "localhost", 8765):
-        await asyncio.Future()
+    await collector.main_loop()
 
 if __name__ == "__main__":
     try:
