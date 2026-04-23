@@ -1,169 +1,51 @@
 
-[DEBUG] EVALUATE called. Buffer holds 261 EEG samples.
-
-[DEBUG] Incremental epoching: 1 new epochs (total processed: 3).
-
-[DEBUG] EVALUATE called. Buffer holds 651 EEG samples.
-
-[DEBUG] Artifact rejection: 3/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 1 new epochs (total processed: 9).
-
-[DEBUG] EVALUATE called. Buffer holds 1066 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 15).
-
-[DEBUG] EVALUATE called. Buffer holds 1465 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 21).
-
-[DEBUG] EVALUATE called. Buffer holds 1857 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 27).
-
-[DEBUG] EVALUATE called. Buffer holds 2268 EEG samples.
-
-[DEBUG] Artifact rejection: 3/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 1 new epochs (total processed: 33).
-
-[DEBUG] EVALUATE called. Buffer holds 2670 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 39).
-
-[DEBUG] EVALUATE called. Buffer holds 3071 EEG samples.
-
-[DEBUG] Artifact rejection: 1/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 3 new epochs (total processed: 45).
-
-[DEBUG] EVALUATE called. Buffer holds 3466 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 51).
-
-[DEBUG] EVALUATE called. Buffer holds 3879 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 57).
-
-[DEBUG] EVALUATE called. Buffer holds 4276 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 63).
-
-[DEBUG] TRIAL_END received! Flashes logged: 63
-
-[DEBUG] FALLBACK PREDICTION PROCESSED! Char: B
-B
-[DEBUG] EVALUATE called. Buffer holds 5579 EEG samples.
-
-[DEBUG] decode_trial() failed! X_test is entirely empty! None of the 6 new flashes mapped to EEG buffer (Length: 5579). First EEG Time: 15681.0317213, First Flash Time: 15701.6831412
-
-[DEBUG] EVALUATE called. Buffer holds 5993 EEG samples.
-
-[DEBUG] decode_trial() failed! X_test is entirely empty! None of the 6 new flashes mapped to EEG buffer (Length: 5993). First EEG Time: 15681.0317213, First Flash Time: 15703.3815189
-
-[DEBUG] EVALUATE called. Buffer holds 6392 EEG samples.
-
-[DEBUG] decode_trial() failed! X_test is entirely empty! None of the 6 new flashes mapped to EEG buffer (Length: 6392). First EEG Time: 15681.0317213, First Flash Time: 15704.9964517
-
-[DEBUG] EVALUATE called. Buffer holds 6792 EEG samples.
-
-[DEBUG] decode_trial() failed! X_test is entirely empty! None of the 6 new flashes mapped to EEG buffer (Length: 6792). First EEG Time: 15681.0317213, First Flash Time: 15706.5953968
-
-[DEBUG] EVALUATE called. Buffer holds 7196 EEG samples.
-
-[DEBUG] decode_trial() failed! X_test is entirely empty! None of the 6 new flashes mapped to EEG buffer (Length: 7196). First EEG Time: 15681.0317213, First Flash Time: 15708.1940654
-
-[DEBUG] EVALUATE called. Buffer holds 7594 EEG samples.
-
-[DEBUG] Artifact rejection: 3/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 1 new epochs (total processed: 36).
-
-[DEBUG] EVALUATE called. Buffer holds 7995 EEG samples.
-
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 42 flashes.
-
-[DEBUG] EVALUATE called. Buffer holds 8401 EEG samples.
-
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 48 flashes.
-
-[DEBUG] EVALUATE called. Buffer holds 8801 EEG samples.
-
-[DEBUG] Artifact rejection: 1/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 3 new epochs (total processed: 54).
-
-[DEBUG] EVALUATE called. Buffer holds 9218 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 60).
-
-[DEBUG] EVALUATE called. Buffer holds 9619 EEG samples.
-
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 66 flashes.
-
-[DEBUG] EVALUATE called. Buffer holds 10018 EEG samples.
-
-[DEBUG] Artifact rejection: 2/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 2 new epochs (total processed: 72).
-
-[DEBUG] TRIAL_END received! Flashes logged: 72
-
-[DEBUG] FALLBACK PREDICTION PROCESSED! Char: D
-D
-[DEBUG] EVALUATE called. Buffer holds 11349 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 758 EEG samples.
 
 [DEBUG] Incremental epoching: 4 new epochs (total processed: 6).
 
-[DEBUG] EVALUATE called. Buffer holds 11751 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 1212 EEG samples.
 
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 12 flashes.
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 12).
 
-[DEBUG] EVALUATE called. Buffer holds 12153 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 1639 EEG samples.
 
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 18 flashes.
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 18).
 
-[DEBUG] EVALUATE called. Buffer holds 12552 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 2109 EEG samples.
 
-[DEBUG] Artifact rejection: 2/4 epochs rejected.
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 24).
 
-[DEBUG] Incremental epoching: 2 new epochs (total processed: 24).
+[DEBUG] EVALUATE called. Buffer holds 2562 EEG samples.
 
-[DEBUG] EVALUATE called. Buffer holds 12948 EEG samples.
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 30).
 
-[DEBUG] Artifact rejection: 1/4 epochs rejected.
+[DEBUG] EVALUATE called. Buffer holds 3005 EEG samples.
 
-[DEBUG] Incremental epoching: 3 new epochs (total processed: 30).
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 36).
 
-[DEBUG] EVALUATE called. Buffer holds 13348 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 3462 EEG samples.
 
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 36 flashes.
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 42).
 
-[DEBUG] EVALUATE called. Buffer holds 13752 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 3920 EEG samples.
 
-[DEBUG] Artifact rejection: 3/4 epochs rejected.
+[DEBUG] Incremental epoching: 4 new epochs (total processed: 48).
 
-[DEBUG] Incremental epoching: 1 new epochs (total processed: 42).
-
-[DEBUG] EVALUATE called. Buffer holds 14153 EEG samples.
-
-[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 48 flashes.
-
-[DEBUG] EVALUATE called. Buffer holds 14557 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 4366 EEG samples.
 
 [DEBUG] Artifact rejection: 1/4 epochs rejected.
 
 [DEBUG] Incremental epoching: 3 new epochs (total processed: 54).
 
-[DEBUG] EVALUATE called. Buffer holds 14950 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 4818 EEG samples.
 
 [DEBUG] Incremental epoching: 4 new epochs (total processed: 60).
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 5271 EEG samples.
 
 [DEBUG] Incremental epoching: 4 new epochs (total processed: 66).
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 5720 EEG samples.
 
 [DEBUG] Incremental epoching: 4 new epochs (total processed: 72).
 
@@ -171,109 +53,30 @@ D
 
 [DEBUG] FALLBACK PREDICTION PROCESSED! Char: A
 A
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 7835 EEG samples.
 
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 6).
+[DEBUG] decode_trial() failed! X_test is entirely empty! None of the 6 new flashes mapped to EEG buffer (Length: 7835). First EEG Time: 48879.2175339, First Flash Time: 48908.6680374
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 12).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 18).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 24).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 30).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 36).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 42).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Artifact rejection: 3/4 epochs rejected.
-
-[DEBUG] Incremental epoching: 1 new epochs (total processed: 48).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 54).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 60).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 66).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 72).
-
-[DEBUG] TRIAL_END received! Flashes logged: 72
-
-[DEBUG] FALLBACK PREDICTION PROCESSED! Char: C
-C
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 6).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 8286 EEG samples.
 
 [DEBUG] Incremental epoching: 4 new epochs (total processed: 12).
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 8722 EEG samples.
 
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 18).
+[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 18 flashes.
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 9186 EEG samples.
 
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 24).
+[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 24 flashes.
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 9636 EEG samples.
 
 [DEBUG] Incremental epoching: 4 new epochs (total processed: 30).
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 10085 EEG samples.
 
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 36).
+[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 36 flashes.
 
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
+[DEBUG] EVALUATE called. Buffer holds 10541 EEG samples.
 
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 42).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 48).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 54).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 60).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 66).
-
-[DEBUG] EVALUATE called. Buffer holds 15000 EEG samples.
-
-[DEBUG] Incremental epoching: 4 new epochs (total processed: 72).
-
-[DEBUG] TRIAL_END received! Flashes logged: 72
-
-[DEBUG] FALLBACK PREDICTION PROCESSED! Char: C
-C
+[DEBUG] No new valid epochs in this batch, using accumulated probabilities from prior 42 flashes.
