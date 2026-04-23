@@ -107,15 +107,15 @@ class RealTimeInference:
         
         print("Training xDAWN + LDA Pipeline...")
         self.model_lda = make_pipeline(
-            Xdawn(nfilter=3),
+            Xdawn(nfilter=2),
             Vectorizer(),
-            LinearDiscriminantAnalysis()
+            LinearDiscriminantAnalysis(solver='lsqr', shrinkage=0.9)
         )
         self.model_lda.fit(X, y)
         
         print("Training Riemannian MDM Pipeline...")
         # Build MDM pipeline with separate references for manual probability extraction
-        self._mdm_cov_transformer = XdawnCovariances(nfilter=3, estimator="oas")
+        self._mdm_cov_transformer = XdawnCovariances(nfilter=2, estimator="oas")
         self._mdm_classifier = MDM()
         
         X_cov = self._mdm_cov_transformer.fit_transform(X, y)
@@ -123,7 +123,7 @@ class RealTimeInference:
         
         # Also build a combined pipeline for convenience
         self.model_mdm = make_pipeline(
-            XdawnCovariances(nfilter=3, estimator="oas"),
+            XdawnCovariances(nfilter=2, estimator="oas"),
             MDM()
         )
         self.model_mdm.fit(X, y)

@@ -27,6 +27,7 @@ DIM_COLOR = '#262626' # Dimmed white
 FLASH_COLOR = '#00FF00'
 FIXATION_COLOR = '#FF0000'
 BG_COLOR = '#121212'
+READY_COLOR = '#555555' # Faint white — used between letters so user can find next target
 
 def get_char_pos(target_char):
     for r in range(6):
@@ -184,13 +185,13 @@ def main():
     instruction = visual.TextStim(win, text="Initializing...", pos=(0, 0.85), color=FLASH_COLOR, height=0.08)
     typed_text = visual.TextStim(win, text="", pos=(0, -0.85), color='#FFFFFF', height=0.1)
     
-    # Pre-compute frames for exact 125ms timings (250ms ISI total)
-    # Increased from 100ms/100ms (200ms ISI) to reduce ERP temporal overlap.
-    # The P300 response lasts 200-400ms, so 200ms ISI caused significant overlap.
-    # 250ms ISI gives each ERP more time to resolve before the next flash.
-    # E.g., 60fps -> 7-8 frames is ~125ms
-    frames_flash_on = int(round((125.0 / 1000.0) * args.fps))
-    frames_flash_off = int(round((125.0 / 1000.0) * args.fps))
+    # Pre-compute frames for exact 150ms timings (300ms ISI total)
+    # 300ms ISI eliminates ERP temporal overlap entirely.
+    # The P300 response lasts 200-400ms; at 300ms ISI each ERP fully resolves
+    # before the next flash, maximizing single-trial discriminability.
+    # E.g., 60fps -> 9 frames is 150ms
+    frames_flash_on = int(round((150.0 / 1000.0) * args.fps))
+    frames_flash_off = int(round((150.0 / 1000.0) * args.fps))
     if frames_flash_on < 1: frames_flash_on = 1
     if frames_flash_off < 1: frames_flash_off = 1
 
@@ -338,6 +339,21 @@ def main():
                 current_spelled += char_found
                 typed_text.setText(current_spelled)
                 
+                # 3 sec illuminated preparation period between letters.
+                # All letters light up in faint white so the user can locate
+                # and focus on the next target before flashing resumes.
+                instruction.setText("Find the next letter...")
+                for row in grid_stims:
+                    for stim in row:
+                        stim.color = READY_COLOR
+                for _ in range(int(3.0 * args.fps)):
+                    draw_all()
+                    win.flip()
+                # Reset all letters back to dim
+                for row in grid_stims:
+                    for stim in row:
+                        stim.color = DIM_COLOR
+                
     else:
         # SUPERVISED TRAINING
         for char in args.word:
@@ -375,11 +391,20 @@ def main():
             current_spelled += char
             typed_text.setText(current_spelled)
             
-            # 2 sec cooldown between characters
-            instruction.setText("Resting...")
-            for _ in range(int(2.0 * args.fps)):
+            # 3 sec illuminated preparation period between letters.
+            # All letters light up in faint white so the user can locate
+            # and focus on the next target before flashing resumes.
+            instruction.setText("Find the next letter...")
+            for row in grid_stims:
+                for stim in row:
+                    stim.color = READY_COLOR
+            for _ in range(int(3.0 * args.fps)):
                 draw_all()
                 win.flip()
+            # Reset all letters back to dim
+            for row in grid_stims:
+                for stim in row:
+                    stim.color = DIM_COLOR
             
             # 20 sec extended rest between words (after every space character)
             if char == '_':

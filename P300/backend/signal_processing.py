@@ -22,19 +22,18 @@ BASELINE_SAMPLES = int(FS * 0.1)         # 25 samples (100 ms pre-stimulus)
 # Artifact rejection threshold (peak-to-peak µV per channel)
 ARTIFACT_THRESHOLD_UV = 100.0
 
-# OSCAR (Online Signal Conditioning and Artifact Removal) delay compensation.
-# The Unicorn's OSCAR filter introduces processing latency that shifts EEG
-# timestamps relative to marker timestamps. The exact delay depends on your
-# firmware/config and MUST be measured empirically, not guessed.
+# Epoch start offset (seconds after flash onset).
+# Skips the early Visual Evoked Potential (VEP) that is identical for target
+# and non-target flashes, giving the classifier cleaner P300-only data.
+# Calibrated via calibrate_epoch_timing.py on Peter v1.0 data.
 #
 # WORKFLOW:
-#   1. Collect training data with OSCAR_DELAY_S = 0.0 (raw, no compensation)
-#   2. Run calibrate_oscar_delay.py to sweep 0-500ms and find the true delay
-#   3. Set OSCAR_DELAY_S to the calibrated value
-#   4. Re-run data_collection.py or bci_classifiers.py with correct alignment
+#   1. Collect training data with EPOCH_START_OFFSET_S = 0.0
+#   2. Run calibrate_epoch_timing.py to find the optimal offset
+#   3. Set EPOCH_START_OFFSET_S to the calibrated value
 #
-# Set to 0.0 if OSCAR is DISABLED in the Unicorn Suite.
-OSCAR_DELAY_S = 0.125  # OSCAR is DISABLED — no delay compensation needed
+# 0.0 = start epoch at flash onset, 0.1 = start 100ms after flash, etc.
+EPOCH_START_OFFSET_S = 0.0  # Reset for new subject — calibrate after collection
 
 # Unicorn Hybrid Black electrode montage (8 channels)
 # Positions correspond to the 10-20 international system
@@ -159,10 +158,9 @@ def extract_epoch(data_arr, time_arr, flash_time, apply_baseline=True):
         Baseline-corrected epoch transposed to (channels, samples).
         Returns None if insufficient data for the epoch window.
     """
-    # Compensate for OSCAR delay: the EEG sample that was actually recorded
-    # at flash_time has timestamp (flash_time + OSCAR_DELAY_S) in the stream,
-    # because OSCAR delayed it before transmission.
-    adjusted_time = flash_time + OSCAR_DELAY_S
+    # Shift epoch start by the calibrated offset to skip the shared VEP
+    # and align extraction with the P300 onset.
+    adjusted_time = flash_time + EPOCH_START_OFFSET_S
     
     idx = np.searchsorted(time_arr, adjusted_time)
     
