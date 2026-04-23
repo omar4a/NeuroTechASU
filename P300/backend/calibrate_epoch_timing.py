@@ -182,8 +182,8 @@ def main():
 
     print(f"\n{'=' * 60}")
     print(f"OPTIMAL EPOCH TIMING:")
-    print(f"  MDM:  Start at +{best_mdm[0]}ms  →  window [{best_mdm[0]}, {best_mdm[0]+EPOCH_DURATION_MS}]ms  (AUC = {best_mdm[3]:.4f})")
-    print(f"  LDA:  Start at +{best_lda[0]}ms  →  window [{best_lda[0]}, {best_lda[0]+EPOCH_DURATION_MS}]ms  (AUC = {best_lda[3]:.4f})")
+    print(f"  MDM:  Start at +{best_mdm[0]}ms -> window [{best_mdm[0]}, {best_mdm[0]+EPOCH_DURATION_MS}]ms  (AUC = {best_mdm[3]:.4f})")
+    print(f"  LDA:  Start at +{best_lda[0]}ms -> window [{best_lda[0]}, {best_lda[0]+EPOCH_DURATION_MS}]ms  (AUC = {best_lda[3]:.4f})")
     print(f"{'=' * 60}")
 
     best_overall = max(results, key=lambda r: max(r[3], r[4]))
@@ -191,7 +191,7 @@ def main():
 
     if best_auc < 0.55:
         print("\nWARNING: Even the best timing produces near-chance AUC.")
-        print("The problem is likely NOT timing — check signal quality.")
+        print("The problem is likely NOT timing -- check signal quality.")
     else:
         print(f"\nTo apply: set EPOCH_START_OFFSET_S = {best_overall[0]/1000.0:.3f} in signal_processing.py")
         print(f"(This shifts epoch extraction to start {best_overall[0]}ms after flash onset)")
