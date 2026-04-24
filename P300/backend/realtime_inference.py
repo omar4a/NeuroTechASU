@@ -56,10 +56,14 @@ class RealTimeInference:
         self.current_trial_flashes = []
         self.is_running = True
         
-        # Incremental decoding state: remembers how many flashes we've already 
+        # Incremental decoding state: remembers how many flashes we've already
         # processed so we don't repeat work.
         self._processed_flash_idx = 0
-        
+        # Count of flashes that actually contributed to the accumulator
+        # (extracted an epoch AND passed artifact rejection). Used as the
+        # confidence denominator so artifacts don't suppress dynamic stop.
+        self._n_decoder_updates = 0
+
         # This dictionary stores our "confidence" for every letter (A-Z, 1-9).
         # We start with every letter having an equal score of 0.
         self._accumulated_scores = {c: 0.0 for c in MATRIX_CHARS}
@@ -70,9 +74,13 @@ class RealTimeInference:
         self.recorded_flashes = []
         self.recorded_predictions = []
         
-        # We use an "Ensemble" (a team of two AI models) to be more accurate.
+        # Ensemble weight for LDA vs MDM. Measured: MDM via softmax-over-
+        # negative-Riemannian-distance is essentially uncalibrated noise
+        # (target p mean 0.513, non-target 0.484, std ~0.02), so mixing it
+        # with LDA at 0.5 halves LDA's effective signal. Keep at 1.0 until
+        # MDM is replaced with a proper calibration (Platt / isotonic).
         self.active_algo = "ensemble"
-        self.ensemble_weight_lda = 0.5 
+        self.ensemble_weight_lda = 1.0
         
         self.model_lda = None
         self.model_mdm = None
@@ -224,33 +232,76 @@ class RealTimeInference:
         # 1. Grab only the NEW flashes since the last time we checked.
         new_flashes = self.current_trial_flashes[self._processed_flash_idx:]
         if not new_flashes: return self._evaluate_accumulated(check_threshold)
-        
+
         time_arr = np.array(self.eeg_times)
         data_arr = np.array(self.eeg_data)[:, :8]
-        
+
+        # Safety: deques are extended (data, then times) in lsl_worker with
+        # no await between, so lengths should match. Clip just in case a
+        # race or partial extension ever slips through.
+        n_common = min(len(time_arr), len(data_arr))
+        time_arr = time_arr[:n_common]
+        data_arr = data_arr[:n_common]
+
         # 2. Filter the entire buffer to avoid filtfilt edge transients destroying the P300
         data_filtered = apply_preprocessing(data_arr)
-        
+
         X_test = []
         groups = []
         last_processed_idx = self._processed_flash_idx
-        
+        n_stale = 0  # flashes older than the buffer — permanently undecodable
+        epoch_wall_spans = []  # for diagnostic on non-uniform LSL delivery
+
         # 3. For every flash, try to extract its 800ms brain wave
         for f_time, group in new_flashes:
+            # Stale: flash timestamp has fallen off the back of the ring
+            # buffer (can happen if decode_trial was blocked for > buffer
+            # duration). Advance past it so we don't stall forever.
+            if len(time_arr) and f_time < time_arr[0]:
+                last_processed_idx += 1
+                n_stale += 1
+                continue
+
             epoch = extract_epoch(data_filtered, time_arr, f_time, apply_baseline=True)
-            
+
             if epoch is None:
                 # If data hasn't arrived in LSL yet, we stop and wait for it.
                 break
-                
+
             last_processed_idx += 1
-            
+
+            # Diagnostic: sample count-to-wall-time sanity. Unicorn Recorder's
+            # LSL timestamps reflect delivery time (bursty), so the 200-sample
+            # epoch window sometimes spans 0.5-1.1s instead of 0.8s, degrading
+            # classifier input. See investigation in repo issues.
+            idx = np.searchsorted(time_arr, f_time)
+            if 0 <= idx < len(time_arr) - SAMPLES_PER_EPOCH:
+                epoch_wall_spans.append(
+                    float(time_arr[idx + SAMPLES_PER_EPOCH - 1] - time_arr[idx])
+                )
+
             # Skip if user blinked
             if not reject_artifacts(epoch, ARTIFACT_THRESHOLD_UV):
                 continue
-                
+
             X_test.append(epoch[ACTIVE_CHANNEL_INDICES, :])
             groups.append(group)
+            # Only count flashes that actually feed the accumulator so the
+            # confidence denominator is correct.
+            self._n_decoder_updates += 1
+
+        if n_stale:
+            print(f"[WARN] decode_trial dropped {n_stale} stale flash(es) "
+                  f"older than buffer start.")
+        if epoch_wall_spans:
+            spans = np.asarray(epoch_wall_spans)
+            bad = int((np.abs(spans - EPOCH_LEN) > 0.15).sum())
+            if bad:
+                print(f"[WARN] {bad}/{len(spans)} epochs span "
+                      f"wall-time outside 0.65-0.95s "
+                      f"(min={spans.min():.3f}s, max={spans.max():.3f}s). "
+                      f"LSL EEG stream is bursty — classifier input is "
+                      f"misaligned with training data.")
         
         self._processed_flash_idx = last_processed_idx
         if not X_test: return self._evaluate_accumulated(check_threshold)
@@ -258,10 +309,15 @@ class RealTimeInference:
         # 4. Ask the AI: "How much P300 signal is in these windows?"
         X_test = np.array(X_test)
         y_probs_lda = self.model_lda.predict_proba(X_test)[:, 1]
-        y_probs_mdm = self._mdm_predict_proba(X_test)[:, 1]
-        
-        # Ensemble: combine both AI models' opinions
-        y_probs = (self.ensemble_weight_lda * y_probs_lda + (1 - self.ensemble_weight_lda) * y_probs_mdm)
+
+        # Skip MDM when LDA is doing all the work — saves a full
+        # Riemannian-distance pass per EVALUATE.
+        if self.ensemble_weight_lda >= 1.0:
+            y_probs = y_probs_lda
+        else:
+            y_probs_mdm = self._mdm_predict_proba(X_test)[:, 1]
+            y_probs = (self.ensemble_weight_lda * y_probs_lda
+                       + (1 - self.ensemble_weight_lda) * y_probs_mdm)
         
         # 5. Robust Additive Update: For every character, update its score.
         # Instead of using brittle log-probabilities, we simply add the raw probabilities.
@@ -280,34 +336,49 @@ class RealTimeInference:
         """Check if any letter has a decisively high score."""
         if not self.current_trial_flashes:
             return None, False
-            
-        # Find the character with the highest accumulated score
-        best_char = max(self._accumulated_scores.items(), key=lambda x: x[1])[0]
-        
-        # Calculate confidence as the normalized gap between the best character and the mean
-        scores = list(self._accumulated_scores.values())
-        max_score = max(scores)
-        mean_score = sum(scores) / len(scores)
-        
-        flashes_processed = self._processed_flash_idx
-        if flashes_processed == 0: return None, False
-        
-        # Max theoretical gap per flash is ~0.15 for our clipped prob distribution
-        confidence = (max_score - mean_score) / (flashes_processed * 0.15 + 1e-5)
-        
+
+        scores_arr = np.fromiter(self._accumulated_scores.values(), dtype=np.float64)
+
+        # Guard: if no flash ever produced a valid epoch, the accumulator is
+        # still at the uniform prior. Returning max(dict) here is a silent
+        # bias toward MATRIX_CHARS[0] ('A'). Surface the failure instead so
+        # the UI can prompt a repeat or the session can be flagged.
+        if np.ptp(scores_arr) < 1e-9:
+            return None, False
+
+        # Use successfully-updated-flash count as the denominator, not
+        # _processed_flash_idx — the latter counts artifact-rejected flashes
+        # that did NOT contribute to the accumulator, artificially suppressing
+        # confidence in high-artifact sessions.
+        flashes_processed = self._n_decoder_updates
+        if flashes_processed == 0:
+            return None, False
+
+        best_char = max(self._accumulated_scores.items(), key=lambda kv: kv[1])[0]
+        max_score = float(scores_arr.max())
+        mean_score = float(scores_arr.mean())
+
+        # Per-flash (target-vs-mean) gap empirically ≈ 0.042 for the live
+        # Xdawn+LDA pipeline on the shipped CBP training data; 0.04 leaves
+        # a small safety margin. See tests/test_p300_paradigm.py for the
+        # measurement and acceptance bound.
+        confidence = (max_score - mean_score) / (flashes_processed * 0.04 + 1e-5)
+
         # If the trial ended naturally, return the best guess so far.
         if not check_threshold:
             return best_char, False
-            
-        # Dynamic Stop Threshold
-        if confidence >= 0.85: # If the lead is decisive
+
+        # Dynamic Stop Threshold — 0.85 of the expected asymptotic gap
+        # implies the leader is decisively ahead of the pack.
+        if confidence >= 0.85:
             return best_char, True
-            
+
         return None, False
 
     def _reset_trial_state(self):
         """Clear memory for a new letter."""
         self._processed_flash_idx = 0
+        self._n_decoder_updates = 0
         self.current_trial_flashes = []
         self._accumulated_scores = {c: 0.0 for c in MATRIX_CHARS}
 
