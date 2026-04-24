@@ -56,6 +56,10 @@ class RealTimeInference:
         self.current_trial_flashes = []
         self.is_running = True
         
+        # Synthetic clock tracking
+        self.global_sample_count = 0
+        self.global_t_anchor = None
+        
         # Incremental decoding state: remembers how many flashes we've already
         # processed so we don't repeat work.
         self._processed_flash_idx = 0
@@ -88,8 +92,8 @@ class RealTimeInference:
         self._mdm_classifier = None
         
         # LSL Outlet: How we talk back to the PsychoPy UI.
-        info_dec = pylsl.StreamInfo('Speller_Decoded', 'Markers', 1, 0, 'string', 'bci_decoder_123')
-        self.decoded_outlet = pylsl.StreamOutlet(info_dec)
+        # We don't create this until the model is trained.
+        self.decoded_outlet = None
         
         # Log file for debugging
         self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spelled_text.txt")
@@ -116,7 +120,7 @@ class RealTimeInference:
         # LDA is a classic classifier that draws a line between Target and Non-Target.
         print("Training xDAWN + LDA Pipeline...")
         self.model_lda = make_pipeline(
-            Xdawn(nfilter=4),
+            Xdawn(nfilter=3),
             Vectorizer(),
             LinearDiscriminantAnalysis(solver='lsqr', shrinkage=0.7)
         )
@@ -125,12 +129,16 @@ class RealTimeInference:
         # Pipeline 2: Riemannian MDM
         # This is high-level math that looks at the "geometry" of brain signals.
         print("Training Riemannian MDM Pipeline...")
-        self._mdm_cov_transformer = XdawnCovariances(nfilter=4, estimator="oas")
+        self._mdm_cov_transformer = XdawnCovariances(nfilter=3, estimator="oas")
         self._mdm_classifier = MDM()
         X_cov = self._mdm_cov_transformer.fit_transform(X, y)
         self._mdm_classifier.fit(X_cov, y)
         
         print("Models Trained Successfully.")
+        
+        # Now publish the "Ready" signal for the UI
+        info_dec = pylsl.StreamInfo('Speller_Decoded', 'Markers', 1, 0, 'string', 'bci_decoder_123')
+        self.decoded_outlet = pylsl.StreamOutlet(info_dec)
 
     def _mdm_predict_proba(self, X_test):
         """
@@ -165,10 +173,29 @@ class RealTimeInference:
         while self.is_running:
             chunk, timestamps = inlet.pull_chunk()
             if timestamps:
+                timestamps = np.array(timestamps)
+                n_samples = len(timestamps)
+                
+                # 1. Calculate ideal time offsets from the start of the session
+                chunk_ideal_offsets = (self.global_sample_count + np.arange(n_samples)) / FS
+                
+                # 2. Find the anchor (minimum delay) for this chunk
+                chunk_anchor = np.min(timestamps - chunk_ideal_offsets)
+                
+                # 3. Update the global true hardware clock anchor
+                if self.global_t_anchor is None:
+                    self.global_t_anchor = chunk_anchor
+                else:
+                    self.global_t_anchor = min(self.global_t_anchor, chunk_anchor)
+                    
+                # 4. Generate perfectly uniform timestamps using the true anchor
+                synthetic_timestamps = self.global_t_anchor + chunk_ideal_offsets
+                
+                self.global_sample_count += n_samples
                 self.eeg_data.extend(chunk)
-                self.eeg_times.extend(timestamps)
+                self.eeg_times.extend(synthetic_timestamps)
                 self.recorded_eeg_data.extend(chunk)
-                self.recorded_eeg_times.extend(timestamps)
+                self.recorded_eeg_times.extend(synthetic_timestamps)
             await asyncio.sleep(0.01)
 
     async def marker_worker(self, marker_inlet):
@@ -192,20 +219,42 @@ class RealTimeInference:
                 
                 elif m_str == "EVALUATE":
                     # The UI wants to know if we've found the letter yet.
-                    predicted_char, hit_threshold = self.decode_trial(check_threshold=True)
-                    if hit_threshold and predicted_char:
-                        print(f"*** DYNAMIC STOP *** FOUND: {predicted_char}")
-                        self.decoded_outlet.push_sample([f"DECODED_{predicted_char}"], pylsl.local_clock())
-                        self.recorded_predictions.append({"time": pylsl.local_clock(), "predicted": predicted_char, "type": "dynamic_stop"})
-                        self._reset_trial_state()
+                    # Guard: Don't perform inference until model is trained
+                    if self.model_lda is not None:
+                        predicted_char, hit_threshold = self.decode_trial(check_threshold=True)
+                        if hit_threshold and predicted_char:
+                            print(f"*** DYNAMIC STOP *** FOUND: {predicted_char}")
+                            self.decoded_outlet.push_sample([f"DECODED_{predicted_char}"], pylsl.local_clock())
+                            self.recorded_predictions.append({"time": pylsl.local_clock(), "predicted": predicted_char, "type": "dynamic_stop"})
+                            self._reset_trial_state()
                 
                 elif m_str == "TRIAL_END":
                     # Flashing is over! We MUST pick a letter now.
-                    predicted_char, _ = self.decode_trial(check_threshold=False)
+                    # But we must wait for the last flashes to actually arrive in the EEG buffer!
+                    # (With 220ms offset + 800ms epoch, the last flash needs 1.02s of data).
+                    print("TRIAL_END received. Waiting for last brainwaves to arrive...")
+                    
+                    predicted_char = None
+                    # Wait up to 3 seconds for the EEG buffer to catch up
+                    for _ in range(300): 
+                        # Guard: Don't decode until model is trained
+                        if self.model_lda is None:
+                            await asyncio.sleep(0.01)
+                            continue
+
+                        predicted_char, _ = self.decode_trial(check_threshold=False)
+                        # Check if we've processed all flashes in this trial
+                        if self._processed_flash_idx >= len(self.current_trial_flashes):
+                            break
+                        await asyncio.sleep(0.01)
+                    
                     if predicted_char:
                         print(f"---------> FINAL GUESS: {predicted_char} <---------")
                         self.decoded_outlet.push_sample([f"DECODED_{predicted_char}"], pylsl.local_clock())
                         self.recorded_predictions.append({"time": pylsl.local_clock(), "predicted": predicted_char, "type": "fallback"})
+                    else:
+                        print("ERROR: Failed to decode letter after 3s timeout.")
+                        
                     self._reset_trial_state()
                     
                 elif m_str == "SESSION_END":
@@ -406,15 +455,26 @@ class RealTimeInference:
             print("\nFATAL ERROR: Could not find Speller_Markers stream!\n")
             return
         
-        inlet = pylsl.StreamInlet(u_streams[0], max_buflen=360)
-        marker_inlet = pylsl.StreamInlet(m_streams[0], max_buflen=120)
+        # Use stable processing flags
+        p_flags = pylsl.proc_dejitter | pylsl.proc_threadsafe
+        inlet = pylsl.StreamInlet(u_streams[0], max_buflen=360, processing_flags=p_flags)
+        marker_inlet = pylsl.StreamInlet(m_streams[0], max_buflen=120, processing_flags=p_flags)
+
+        # Start listening immediately in the background
+        # This ensures we capture SESSION_START even if we are still training.
+        lsl_task = asyncio.create_task(self.lsl_worker(inlet))
+        marker_task = asyncio.create_task(self.marker_worker(marker_inlet))
         
-        print("\n[READY] Engine active. Decoding dynamic markers...")
-        await asyncio.gather(self.lsl_worker(inlet), self.marker_worker(marker_inlet))
+        # Train the model in the background while the workers buffer data
+        print("Training models in background...")
+        await loop.run_in_executor(None, self.load_and_train_model)
+        
+        print("\n[READY] Engine active and models trained. Decoding dynamic markers...")
+        await asyncio.gather(lsl_task, marker_task)
 
 async def main():
     agent = RealTimeInference()
-    agent.load_and_train_model()
+    # main_loop now handles model training internally
     await agent.main_loop()
 
 if __name__ == "__main__":

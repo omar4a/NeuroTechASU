@@ -294,20 +294,24 @@ def main():
     current_spelled = ""
 
     if args.inference:
-        # FREESTYLE INFERENCE 
-        print("Resolving Speller_Decoded Stream from backend...")
-        dec_streams = pylsl.resolve_byprop('name', 'Speller_Decoded', 1, 10.0)
-        
-        if not dec_streams:
+        print("Connecting to Backend Decoded marker stream (waiting for model training)...")
+        dec_inlet = None
+        # Patient resolution: model training takes ~15s, so we wait up to 40s
+        for i in range(40):
+            streams = pylsl.resolve_byprop('name', 'Speller_Decoded', 1, 1.0)
+            if streams:
+                dec_inlet = pylsl.StreamInlet(streams[0])
+                print(f"Backend Ready! Connection established after {i+1}s.")
+                break
+            print(f"  Still waiting for backend model to train... ({i+1}/40s)")
+            
+        if not dec_inlet:
             from psychopy import gui
             dlg = gui.Dlg(title="FATAL SYSTEM ERROR")
             dlg.addText("Could not resolve Speller_Decoded stream!")
-            dlg.addText("This means realtime_inference.py crashed in the background.")
-            dlg.addText("Did you forget to do Supervised Training first? Check the black console!")
+            dlg.addText("Check the backend console — is the model still training?")
             dlg.show()
             core.quit()
-            
-        dec_inlet = pylsl.StreamInlet(dec_streams[0])
         
         for t in range(args.trials):
             outlet.push_sample(["SESSION_START"], pylsl.local_clock())
@@ -351,10 +355,17 @@ def main():
                 win.flip()
                 outlet.push_sample(["TRIAL_END"], pylsl.local_clock())
                 
-                # Extended wait timeout to guarantee backend catch-up
-                for _ in range(int(3.0 * args.fps)):
+                # Extended wait timeout to guarantee backend catch-up.
+                # We wait up to 10 seconds to completely eliminate race conditions,
+                # but it will break instantly as soon as the marker arrives.
+                for _ in range(int(10.0 * args.fps)):
                     draw_all()
                     win.flip()
+                    if event.getKeys(keyList=['escape']):
+                        outlet.push_sample(["SESSION_END"], pylsl.local_clock())
+                        win.close()
+                        core.quit()
+                        
                     if dec_inlet:
                         marker, _ = dec_inlet.pull_sample(timeout=0.0)
                         if marker:

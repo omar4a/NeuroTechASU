@@ -37,9 +37,9 @@ BASELINE_SAMPLES = int(FS * 0.1)         # We use 100ms of data BEFORE the flash
 ARTIFACT_THRESHOLD_UV = 100.0
 
 # Epoch start offset (seconds after flash onset).
-# We set this to 0.0 to start exactly at the moment the light flashes.
-# This ensures our "baseline" is actually taken before the brain reacts to the light.
-EPOCH_START_OFFSET_S = 0.0 
+# We set this to 0.06 to start extraction at the 60ms mark.
+# This ensures our window covers [60ms, 860ms] post-flash.
+EPOCH_START_OFFSET_S = 0.06 
 
 # Unicorn Hybrid Black electrode montage (8 channels)
 # These are the standard names for where the sensors sit on the head.

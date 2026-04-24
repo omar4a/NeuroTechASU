@@ -41,9 +41,9 @@ output_dir = os.path.dirname(os.path.abspath(__file__))
 raw_dir = os.path.join(output_dir, "raw_session")
 
 # Sweep parameters
-OFFSET_MIN_MS = 0       # Start from flash onset
-OFFSET_MAX_MS = 600     # Max start offset (ms after flash)
-OFFSET_STEP_MS = 10     # 10ms resolution
+OFFSET_MIN_MS = 50       # Start from flash onset
+OFFSET_MAX_MS = 300     # Max start offset (ms after flash)
+OFFSET_STEP_MS = 10     # 50ms resolution to speed up grid search
 EPOCH_DURATION_MS = 800  # Fixed epoch duration (ms)
 
 
@@ -137,6 +137,13 @@ def main():
     print(f"Targets: {np.sum(flash_events['label'] == 1)}, "
           f"Non-targets: {np.sum(flash_events['label'] == 0)}")
 
+    if len(flash_events) > 1000:
+        print(f"\nDownsampling {len(flash_events)} flashes to 1000 to speed up calibration...")
+        np.random.seed(42)
+        idx = np.random.choice(len(flash_events), 1000, replace=False)
+        idx.sort()
+        flash_events = flash_events[idx]
+        
     epoch_samples = int(EPOCH_DURATION_MS / 1000.0 * FS)
     offsets_ms = list(range(OFFSET_MIN_MS, OFFSET_MAX_MS + 1, OFFSET_STEP_MS))
 

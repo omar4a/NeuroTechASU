@@ -35,6 +35,11 @@ class DataCollector:
         self.flash_events = []  # A list of (timestamp, label) for every flash
         self.is_recording = False
         
+        # Synthetic clock tracking
+        self.global_sample_count = 0
+        self.global_t_anchor = None
+
+        
     async def lsl_worker(self, inlet):
         """
         Worker 1: The EEG Listener.
@@ -45,8 +50,27 @@ class DataCollector:
             # pull_chunk grabs a bunch of data at once to be efficient
             chunk, timestamps = inlet.pull_chunk(max_samples=1250)
             if timestamps:
+                timestamps = np.array(timestamps)
+                n_samples = len(timestamps)
+                
+                # 1. Calculate ideal time offsets from the start of the session
+                chunk_ideal_offsets = (self.global_sample_count + np.arange(n_samples)) / FS
+                
+                # 2. Find the anchor (minimum delay) for this chunk
+                chunk_anchor = np.min(timestamps - chunk_ideal_offsets)
+                
+                # 3. Update the global true hardware clock anchor
+                if self.global_t_anchor is None:
+                    self.global_t_anchor = chunk_anchor
+                else:
+                    self.global_t_anchor = min(self.global_t_anchor, chunk_anchor)
+                    
+                # 4. Generate perfectly uniform timestamps using the true anchor
+                synthetic_timestamps = self.global_t_anchor + chunk_ideal_offsets
+                
+                self.global_sample_count += n_samples
                 self.eeg_data.extend(chunk)
-                self.eeg_times.extend(timestamps)
+                self.eeg_times.extend(synthetic_timestamps)
             
             # Wait a tiny bit (4ms) so we don't hog the CPU
             await asyncio.sleep(0.004) 
