@@ -370,7 +370,7 @@ class RealTimeInference:
 
         # Dynamic Stop Threshold — 0.85 of the expected asymptotic gap
         # implies the leader is decisively ahead of the pack.
-        if confidence >= 0.85:
+        if confidence >= 0.99:
             return best_char, True
 
         return None, False
