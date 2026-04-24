@@ -61,8 +61,8 @@ class RealTimeInference:
         self._processed_flash_idx = 0
         
         # This dictionary stores our "confidence" for every letter (A-Z, 1-9).
-        # We start with every letter having an equal, low probability.
-        self._accumulated_log_probs = {c: -np.log(len(MATRIX_CHARS)) for c in MATRIX_CHARS}
+        # We start with every letter having an equal score of 0.
+        self._accumulated_scores = {c: 0.0 for c in MATRIX_CHARS}
         
         # Recording arrays for post-hoc diagnosis
         self.recorded_eeg_data = []
@@ -150,6 +150,10 @@ class RealTimeInference:
 
     async def lsl_worker(self, inlet):
         """Continuously pulls EEG data into our 120-second ring buffer."""
+        print("Synchronizing LSL clocks... (3 seconds)")
+        await asyncio.sleep(3.0)
+        print("[READY] Clock sync complete. Pulling data.")
+        
         while self.is_running:
             chunk, timestamps = inlet.pull_chunk()
             if timestamps:
@@ -259,44 +263,53 @@ class RealTimeInference:
         # Ensemble: combine both AI models' opinions
         y_probs = (self.ensemble_weight_lda * y_probs_lda + (1 - self.ensemble_weight_lda) * y_probs_mdm)
         
-        # 5. Bayesian Update: For every character, update its score.
-        # If 'A' was in a group that looked like a Target, 'A's score goes UP.
+        # 5. Robust Additive Update: For every character, update its score.
+        # Instead of using brittle log-probabilities, we simply add the raw probabilities.
+        # This prevents a single overconfident false-negative from destroying a character's score.
         for i, group in enumerate(groups):
-            # Strongly clip probabilities to prevent a single false positive from destroying the accumulator
-            p_target = np.clip(y_probs[i], 0.1, 0.9)
+            p_target = np.clip(y_probs[i], 0.0, 1.0)
             for c in MATRIX_CHARS:
                 if c in group:
-                    self._accumulated_log_probs[c] += np.log(p_target)
+                    self._accumulated_scores[c] += p_target
                 else:
-                    self._accumulated_log_probs[c] += np.log(1.0 - p_target)
+                    self._accumulated_scores[c] += (1.0 - p_target)
         
         return self._evaluate_accumulated(check_threshold)
 
     def _evaluate_accumulated(self, check_threshold):
-        """
-        Converts internal scores to a simple 0-100% confidence.
-        """
-        max_log_p = max(self._accumulated_log_probs.values())
-        safe_probs = {c: np.exp(val - max_log_p) for c, val in self._accumulated_log_probs.items()}
-        total_p = sum(safe_probs.values())
-        
-        for c in safe_probs: safe_probs[c] /= total_p
-        
-        best_char = max(safe_probs.items(), key=lambda x: x[1])
-        
-        if check_threshold:
-            # We only "stop" if we are 95% sure.
-            if best_char[1] >= 0.95:
-                return best_char[0], True
+        """Check if any letter has a decisively high score."""
+        if not self.current_trial_flashes:
             return None, False
             
-        return best_char[0], True
+        # Find the character with the highest accumulated score
+        best_char = max(self._accumulated_scores.items(), key=lambda x: x[1])[0]
+        
+        # Calculate confidence as the normalized gap between the best character and the mean
+        scores = list(self._accumulated_scores.values())
+        max_score = max(scores)
+        mean_score = sum(scores) / len(scores)
+        
+        flashes_processed = self._processed_flash_idx
+        if flashes_processed == 0: return None, False
+        
+        # Max theoretical gap per flash is ~0.15 for our clipped prob distribution
+        confidence = (max_score - mean_score) / (flashes_processed * 0.15 + 1e-5)
+        
+        # If the trial ended naturally, return the best guess so far.
+        if not check_threshold:
+            return best_char, False
+            
+        # Dynamic Stop Threshold
+        if confidence >= 0.85: # If the lead is decisive
+            return best_char, True
+            
+        return None, False
 
     def _reset_trial_state(self):
         """Clear memory for a new letter."""
         self._processed_flash_idx = 0
         self.current_trial_flashes = []
-        self._accumulated_log_probs = {c: -np.log(len(MATRIX_CHARS)) for c in MATRIX_CHARS}
+        self._accumulated_scores = {c: 0.0 for c in MATRIX_CHARS}
 
     async def main_loop(self):
         print("Resolving LSL Streams...")
