@@ -29,6 +29,7 @@ except ImportError:
     print("WARNING: pyriemann/mne not available. Skipping xDAWN pipelines.")
 
 output_dir = os.path.dirname(os.path.abspath(__file__))
+training_dir = os.path.join(output_dir, "training_data")
 
 CHANNEL_NAMES = ['Fz', 'C3', 'Cz', 'C4', 'Pz', 'PO7', 'Oz', 'PO8']
 FS = 250
@@ -37,8 +38,8 @@ SAMPLES = int(FS * EPOCH_LEN_S)  # 200
 
 def load_dataset(version_suffix=""):
     """Load a dataset version. Returns X (epochs, ch, samples), y (labels)."""
-    xf = os.path.join(output_dir, f"X_train{version_suffix}.npy")
-    yf = os.path.join(output_dir, f"y_train{version_suffix}.npy")
+    xf = os.path.join(training_dir, f"X_train{version_suffix}.npy")
+    yf = os.path.join(training_dir, f"y_train{version_suffix}.npy")
     if not os.path.exists(xf):
         return None, None
     return np.load(xf), np.load(yf)

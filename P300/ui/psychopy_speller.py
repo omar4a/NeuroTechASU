@@ -120,7 +120,7 @@ def main():
     # This must happen BEFORE subprocess creation, otherwise Pyglet loses foreground focus 
     # and gets permanently stuck calculating the monitor refresh rate!
     win = visual.Window(size=[1280, 720], fullscr=True, allowGUI=False, 
-                        color=BG_COLOR, units='norm', waitBlanking=True)
+                        color=BG_COLOR, units='norm', waitBlanking=True, checkTiming=False)
 
     # --- AUTO-LAUNCH BACKEND ---
     import subprocess
@@ -308,23 +308,19 @@ def main():
                             char_found = marker[0].replace("DECODED_", "")
                             break
                             
-                # Trigger an evaluation after a full block
+                # Trigger an evaluation after a full block, but don't stop flashing
                 if not char_found:
                     outlet.push_sample(["EVALUATE"], pylsl.local_clock())
-                    # Check immediately
-                    if dec_inlet:
-                        marker, _ = dec_inlet.pull_sample(timeout=0.0)
-                        if marker and marker[0].startswith("DECODED_"):
-                            char_found = marker[0].replace("DECODED_", "")
-                            break
             
             # If we reached max blocks without a dynamic stop
             if not char_found:
-                instruction.setText("Decoding Fallback...")
+                instruction.setText("Finalizing... Decoding Fallback...")
+                draw_all()
+                win.flip()
                 outlet.push_sample(["TRIAL_END"], pylsl.local_clock())
                 
-                # Extended 4.0s wait timeout to guarantee backend catch-up
-                for _ in range(int(4.0 * args.fps)):
+                # Extended wait timeout to guarantee backend catch-up
+                for _ in range(int(3.0 * args.fps)):
                     draw_all()
                     win.flip()
                     if dec_inlet:
@@ -353,6 +349,9 @@ def main():
                 for row in grid_stims:
                     for stim in row:
                         stim.color = DIM_COLOR
+                        
+        # Inference complete, tell backend to save the recording
+        outlet.push_sample(["SESSION_END"], pylsl.local_clock())
                 
     else:
         # SUPERVISED TRAINING

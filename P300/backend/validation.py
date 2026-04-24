@@ -12,13 +12,13 @@ import matplotlib.pyplot as plt
 from signal_processing import PZ_INDEX, EPOCH_LEN
 
 # Use portable path resolution instead of hardcoded absolute paths
-output_dir = os.path.dirname(os.path.abspath(__file__))
+from signal_processing import TRAINING_DATA_DIR
 
 # 1. Load your data
 # Assuming X_train shape is (epochs, channels, timepoints) 
 # Assuming 250Hz sampling rate and 800ms epoch (200 timepoints)
-X = np.load(os.path.join(output_dir, "X_train.npy"))
-y = np.load(os.path.join(output_dir, "y_train.npy"))
+X = np.load(os.path.join(TRAINING_DATA_DIR, "X_train.npy"))
+y = np.load(os.path.join(TRAINING_DATA_DIR, "y_train.npy"))
 
 # PZ_INDEX imported from signal_processing (shared single source of truth)
 

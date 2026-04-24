@@ -1,3 +1,0 @@
-import numpy as np
-import scipy.signal
-# ... just test math ...

@@ -31,9 +31,9 @@ def main():
                         help="Choose classification pipeline to evaluate")
     args = parser.parse_args()
 
-    output_dir = os.path.dirname(os.path.abspath(__file__))
-    x_path = os.path.join(output_dir, "X_train_peter_1.0.npy")
-    y_path = os.path.join(output_dir, "y_train_peter_1.0.npy")
+    from signal_processing import TRAINING_DATA_DIR
+    x_path = os.path.join(TRAINING_DATA_DIR, "X_train.npy")
+    y_path = os.path.join(TRAINING_DATA_DIR, "y_train.npy")
 
     if not os.path.exists(x_path) or not os.path.exists(y_path):
         print("Data files not found. Please run data_collection.py with the Speller UI first to generate X_train.npy and y_train.npy")

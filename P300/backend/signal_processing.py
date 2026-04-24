@@ -1,46 +1,56 @@
 """
 Shared Signal Processing Module for the P300 BCI Speller.
 
-Centralizes all preprocessing, constants, and artifact rejection logic
-used by both data_collection.py and realtime_inference.py.
-Filter coefficients are pre-computed once at module load for performance.
+This module is the "brain" of the data processing pipeline. It defines how we 
+clean the raw electrical signals from the brain (EEG) and how we cut them 
+into small pieces (epochs) that the AI can understand.
+
+Fundamental Concepts:
+1. FS (Sampling Rate): How many snapshots of brain activity we take per second.
+2. Filtering: Removing noise like electricity from the walls (50Hz) or muscle movement.
+3. Epoching: Cutting the continuous EEG stream into windows locked to a "flash" event.
+4. Baseline Correction: Centering the signal so it starts at zero, removing DC offset.
 """
 
+import os
 import numpy as np
 from scipy.signal import butter, filtfilt, iirnotch
 
 # ============================================================================
+# Paths & Environment
+# ============================================================================
+# Automatically find where this file is located so we can find the data folders.
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+TRAINING_DATA_DIR = os.path.join(_BACKEND_DIR, "training_data")
+
+# ============================================================================
 # Hardware Constants — g.tec Unicorn Hybrid Black
 # ============================================================================
-FS = 250                            # Sampling rate (Hz) — hardware-locked
-EPOCH_LEN = 0.6                     # Epoch duration (seconds) post-stimulus
-                                    # Reduced from 0.8 — diagnostic showed 200-600ms
-                                    # window outperforms full 800ms (less noise features)
-SAMPLES_PER_EPOCH = int(FS * EPOCH_LEN)  # 150 samples
-BASELINE_SAMPLES = int(FS * 0.1)         # 25 samples (100 ms pre-stimulus)
+FS = 250                            # The Unicorn headset sends 250 samples every second.
+EPOCH_LEN = 0.8                     # We look at 800ms of data after every flash to find the P300.
+                                    # 800ms is enough to see the "Peak" which usually happens at 300-500ms.
+SAMPLES_PER_EPOCH = int(FS * EPOCH_LEN)  # 0.8 seconds * 250 samples/sec = 200 samples.
+BASELINE_SAMPLES = int(FS * 0.1)         # We use 100ms of data BEFORE the flash to "zero" the signal.
 
 # Artifact rejection threshold (peak-to-peak µV per channel)
+# If a signal jumps more than 150 microvolts (like a blink or a cough), we throw it away.
 ARTIFACT_THRESHOLD_UV = 100.0
 
 # Epoch start offset (seconds after flash onset).
-# Skips the early Visual Evoked Potential (VEP) that is identical for target
-# and non-target flashes, giving the classifier cleaner P300-only data.
-# Calibrated via calibrate_epoch_timing.py on Peter v1.0 data.
-#
-# WORKFLOW:
-#   1. Collect training data with EPOCH_START_OFFSET_S = 0.0
-#   2. Run calibrate_epoch_timing.py to find the optimal offset
-#   3. Set EPOCH_START_OFFSET_S to the calibrated value
-#
-# 0.0 = start epoch at flash onset, 0.1 = start 100ms after flash, etc.
-EPOCH_START_OFFSET_S = 0.0  # Reset for new subject — calibrate after collection
+# We set this to 0.0 to start exactly at the moment the light flashes.
+# This ensures our "baseline" is actually taken before the brain reacts to the light.
+EPOCH_START_OFFSET_S = 0.0 
 
 # Unicorn Hybrid Black electrode montage (8 channels)
-# Positions correspond to the 10-20 international system
+# These are the standard names for where the sensors sit on the head.
 UNICORN_CHANNELS = ['Fz', 'C3', 'Cz', 'C4', 'Pz', 'PO7', 'Oz', 'PO8']
-PZ_INDEX = 4  # Index of the Pz channel in the Unicorn montage
+PZ_INDEX = 4  # Pz is the most important channel for P300; it's right on top of the head.
 
-# 6x6 Farwell-Donchin character matrix (flattened for inference voting)
+# Active channel subset for classification.
+# We use all 8 channels to give the AI as much information as possible.
+ACTIVE_CHANNEL_INDICES = [0, 1, 2, 3, 4, 5, 6, 7] 
+
+# The 6x6 matrix of characters shown on the screen.
 MATRIX_CHARS = [
     'A', 'B', 'C', 'D', 'E', 'F',
     'G', 'H', 'I', 'J', 'K', 'L',
@@ -50,78 +60,53 @@ MATRIX_CHARS = [
     '5', '6', '7', '8', '9', '_'
 ]
 
-# 6x6 matrix grid (for UI)
-MATRIX_GRID = [
-    ['A', 'B', 'C', 'D', 'E', 'F'],
-    ['G', 'H', 'I', 'J', 'K', 'L'],
-    ['M', 'N', 'O', 'P', 'Q', 'R'],
-    ['S', 'T', 'U', 'V', 'W', 'X'],
-    ['Y', 'Z', '1', '2', '3', '4'],
-    ['5', '6', '7', '8', '9', '_']
-]
-
 # ============================================================================
-# Pre-computed Filter Coefficients (computed ONCE at module load)
+# Pre-computed Filter Coefficients
 # ============================================================================
-_nyq = 0.5 * FS
+# We compute these once when the program starts so the math is faster later.
+_nyq = 0.5 * FS  # Nyquist frequency (half the sampling rate)
 
-# Bandpass: 0.5 – 30 Hz, 4th-order Butterworth
-# Widened from 20Hz — 20Hz was too aggressive and attenuated high-frequency
-# ERP components that carry discriminative information for the P300.
+# Bandpass Filter: We only care about brain waves between 0.5 Hz and 30 Hz.
+# This removes very slow drifts and very fast "fuzz" (noise).
 _bp_low = 0.5 / _nyq
 _bp_high = 30.0 / _nyq
 BP_B, BP_A = butter(4, [_bp_low, _bp_high], btype='band')
 
-# Notch: 50 Hz (European mains), Q=30
+# Notch Filter: Electricity in the walls vibrates at 50 Hz (in Europe/Egypt).
+# This acts like a "surgical strike" to remove exactly 50 Hz noise.
 _notch_freq = 50.0 / _nyq
 NOTCH_B, NOTCH_A = iirnotch(_notch_freq, 30.0)
 
 
-# ============================================================================
-# Preprocessing Functions
-# ============================================================================
-
 def apply_preprocessing(data):
     """
-    Apply bandpass (0.5-20 Hz) and 50 Hz notch filtering to continuous EEG data.
-    Uses pre-computed filter coefficients for maximum performance.
+    Apply the filters to a chunk of EEG data.
     
-    Parameters
-    ----------
-    data : np.ndarray, shape (samples, channels)
-        Raw EEG data in time-major format.
-    
-    Returns
-    -------
-    np.ndarray : Filtered EEG data, same shape as input.
+    Parameters:
+        data: A numpy array of raw brain waves (samples x channels).
+    Returns:
+        The same data but cleaned and smoothed.
     """
-    # Zero-phase bandpass filter
+    # filtfilt is "Zero-Phase" filtering — it processes the data forward and backward
+    # so that the timing of the brain waves doesn't get shifted by the filter math.
     filtered = filtfilt(BP_B, BP_A, data, axis=0)
-    # Zero-phase notch filter
     filtered = filtfilt(NOTCH_B, NOTCH_A, filtered, axis=0)
     return filtered
 
 
 def reject_artifacts(epoch, threshold_uv=ARTIFACT_THRESHOLD_UV):
     """
-    Check if an epoch exceeds the artifact rejection threshold.
-    Uses peak-to-peak amplitude per channel — if ANY channel exceeds
-    the threshold, the entire epoch is rejected.
+    Check if the user blinked or moved too much during a flash.
     
-    Parameters
-    ----------
-    epoch : np.ndarray, shape (channels, samples) or (samples, channels)
-        Single epoch of EEG data.
-    threshold_uv : float
-        Maximum allowed peak-to-peak amplitude in µV.
-    
-    Returns
-    -------
-    bool : True if the epoch is CLEAN (should be kept), False if it should be rejected.
+    Parameters:
+        epoch: A single 800ms window of brain data.
+    Returns:
+        True if the data is "clean" (keep it).
+        False if it's "noisy" (throw it away).
     """
-    # Ensure we compute peak-to-peak along the time axis
+    # Calculate the Peak-to-Peak (max value minus min value).
+    # If the signal jumps more than our threshold, it's probably noise, not brain activity.
     if epoch.ndim == 2:
-        # If shape is (channels, samples), compute along axis=1
         if epoch.shape[0] < epoch.shape[1]:
             ptp = np.ptp(epoch, axis=1)
         else:
@@ -134,46 +119,33 @@ def reject_artifacts(epoch, threshold_uv=ARTIFACT_THRESHOLD_UV):
 
 def extract_epoch(data_arr, time_arr, flash_time, apply_baseline=True):
     """
-    Extract a single epoch from continuous data given a flash timestamp.
+    Cut a specific 800ms slice of data out of the continuous stream.
     
-    Compensates for OSCAR processing delay: the Unicorn's OSCAR filter delays
-    EEG data by ~250ms relative to marker timestamps. Without compensation,
-    the epoch captures [-250ms, +550ms] instead of [0ms, +800ms], shifting
-    the P300 from its expected ~300ms position to ~550ms.
-    
-    Parameters
-    ----------
-    data_arr : np.ndarray, shape (samples, channels)
-        Continuous EEG data (already preprocessed).
-    time_arr : np.ndarray, shape (samples,)
-        Corresponding timestamps.
-    flash_time : float
-        LSL timestamp of the flash onset.
-    apply_baseline : bool
-        Whether to apply baseline correction.
-    
-    Returns
-    -------
-    epoch : np.ndarray, shape (channels, samples) or None
-        Baseline-corrected epoch transposed to (channels, samples).
-        Returns None if insufficient data for the epoch window.
+    Parameters:
+        data_arr: The continuous stream of cleaned EEG.
+        time_arr: The timestamps for every sample in that stream.
+        flash_time: Exactly when the light flashed on the screen.
+    Returns:
+        A (channels x samples) window of data, or None if the data hasn't arrived yet.
     """
-    # Shift epoch start by the calibrated offset to skip the shared VEP
-    # and align extraction with the P300 onset.
+    # 1. Find the "moment of the flash" in our data array.
     adjusted_time = flash_time + EPOCH_START_OFFSET_S
-    
     idx = np.searchsorted(time_arr, adjusted_time)
     
-    # Check bounds: need BASELINE_SAMPLES before and SAMPLES_PER_EPOCH after
+    # 2. Check if we have enough data yet. 
+    # We need 100ms before (for baseline) and 800ms after (for the P300).
     if idx - BASELINE_SAMPLES < 0 or idx + SAMPLES_PER_EPOCH >= len(data_arr):
-        return None
+        return None  # Data hasn't arrived in the buffer yet!
     
+    # 3. Grab the baseline (the silence before the flash) and the epoch (the response).
     baseline = data_arr[idx - BASELINE_SAMPLES : idx]
     epoch = data_arr[idx : idx + SAMPLES_PER_EPOCH]
     
+    # 4. Baseline Correction: Subtract the average of the "silence" from the response.
+    # This ensures that every flash starts at "0 microvolts" regardless of slow drifts.
     if apply_baseline:
         baseline_mean = np.mean(baseline, axis=0)
         epoch = epoch - baseline_mean
     
-    # Transpose to (channels, samples) — expected by pyriemann/sklearn pipelines
+    # Return it in the shape (channels, samples) which the AI models expect.
     return epoch.T
