@@ -355,24 +355,31 @@ class RealTimeInference:
             return None, False
 
         best_char = max(self._accumulated_scores.items(), key=lambda kv: kv[1])[0]
-        max_score = float(scores_arr.max())
-        mean_score = float(scores_arr.mean())
-
-        # Per-flash (target-vs-mean) gap empirically ≈ 0.042 for the live
-        # Xdawn+LDA pipeline on the shipped CBP training data; 0.04 leaves
-        # a small safety margin. See tests/test_p300_paradigm.py for the
-        # measurement and acceptance bound.
-        confidence = (max_score - mean_score) / (flashes_processed * 0.04 + 1e-5)
 
         # If the trial ended naturally, return the best guess so far.
         if not check_threshold:
             return best_char, False
 
-        # Dynamic Stop Threshold — 0.85 of the expected asymptotic gap
-        # implies the leader is decisively ahead of the pack.
-        if confidence >= 0.99:
-            return best_char, True
-
+        # Dynamic stop is disabled until a proper posterior is in place.
+        #
+        # The prior formula
+        #
+        #     confidence = (max_score - mean_score) / (flashes * k)
+        #
+        # is dimensionally (signal / flashes) — both numerator and
+        # denominator scale linearly with flash count, so the ratio is
+        # essentially constant after the first block, independent of how
+        # much evidence has accumulated. That caused early firing on a
+        # still-noisy accumulator and committed the wrong letter (target
+        # LMFAO → HAMSE on the Apr-24 session; raising the threshold
+        # from 0.85 to 0.99 didn't fix it because the ratio is nearly
+        # constant with N). A correct dynamic stop needs a posterior
+        # whose concentration grows with N — a log-prob Bayesian
+        # accumulator with bounded p, or a rank-stability heuristic
+        # across consecutive EVALUATE calls. Until that is rebuilt,
+        # rely on TRIAL_END's fallback path, which uses the full
+        # args.blocks × events-per-block budget before committing
+        # (≥ 95 % accuracy at 6 blocks in simulation).
         return None, False
 
     def _reset_trial_state(self):
