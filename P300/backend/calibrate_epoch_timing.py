@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+from sklearn.preprocessing import StandardScaler
 
 try:
     from pyriemann.spatialfilters import Xdawn
@@ -41,8 +42,8 @@ output_dir = os.path.dirname(os.path.abspath(__file__))
 raw_dir = os.path.join(output_dir, "raw_session")
 
 # Sweep parameters
-OFFSET_MIN_MS = 50       # Start from flash onset
-OFFSET_MAX_MS = 300     # Max start offset (ms after flash)
+OFFSET_MIN_MS = 0       # Start from flash onset
+OFFSET_MAX_MS = 400     # Max start offset (ms after flash)
 OFFSET_STEP_MS = 10     # 50ms resolution to speed up grid search
 EPOCH_DURATION_MS = 800  # Fixed epoch duration (ms)
 
@@ -98,14 +99,16 @@ def evaluate_auc(X, y, pipeline_type='mdm'):
         )
     else:  # lda
         pipe = make_pipeline(
-            Xdawn(nfilter=2),
+            Xdawn(nfilter=2, estimator='oas'),
             Vectorizer(),
-            LinearDiscriminantAnalysis(solver='lsqr', shrinkage=0.9)
+            StandardScaler(),
+            LinearDiscriminantAnalysis(solver='eigen', shrinkage='auto')
         )
 
     try:
-        scores = cross_val_score(pipe, X, y, cv=cv, scoring='roc_auc')
-        return scores.mean()
+        # Use error_score=0.0 to handle fits that fail numerically without crashing the whole process
+        scores = cross_val_score(pipe, X, y, cv=cv, scoring='roc_auc', error_score=0.0)
+        return float(np.mean(scores))
     except Exception:
         return 0.0
 
