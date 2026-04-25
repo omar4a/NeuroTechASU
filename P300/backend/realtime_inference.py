@@ -27,6 +27,12 @@ _user_site = os.path.expanduser(r"~\AppData\Roaming\Python\Python310\site-packag
 if os.path.isdir(_user_site) and _user_site not in sys.path:
     sys.path.append(_user_site)
 
+# Import SSVEP Classifier
+ssvep_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "SSVEP Protocol"))
+if ssvep_path not in sys.path:
+    sys.path.append(ssvep_path)
+from ssvep_realtime import SSVEPClassifier
+
 # Standard scientific BCI libraries
 from pyriemann.spatialfilters import Xdawn
 from pyriemann.estimation import XdawnCovariances
@@ -48,6 +54,14 @@ MAX_BUFFER_SAMPLES = FS * 120
 
 class RealTimeInference:
     def __init__(self):
+        # Hybrid BCI States
+        self.bci_mode = "P300" # Toggles between P300 and SSVEP
+        self.ssvep_targets = [10.0, 12.0, 15.0, 8.57, 7.5] # 5 distinct options
+        self.ssvep_classifier = SSVEPClassifier(targets=self.ssvep_targets)
+        import collections
+        self.ssvep_buffer = collections.deque(maxlen=int(FS * 1.0)) # 1-second rolling window
+        self.ssvep_history = collections.deque(maxlen=4)
+        self.roi_indices = [5, 6, 7] # PO7, Oz, PO8 indices from ACTIVE_CHANNEL_INDICES
         # Ring buffers: Deque is like a pipe; when you push data in one end, 
         # old data falls out the other end once it's full.
         self.eeg_data = deque(maxlen=MAX_BUFFER_SAMPLES)
@@ -196,6 +210,28 @@ class RealTimeInference:
                 self.eeg_times.extend(synthetic_timestamps)
                 self.recorded_eeg_data.extend(chunk)
                 self.recorded_eeg_times.extend(synthetic_timestamps)
+                
+                if self.bci_mode == "SSVEP":
+                    for sample in chunk:
+                        roi_data = [sample[idx] for idx in self.roi_indices]
+                        self.ssvep_buffer.append(roi_data)
+                        
+                        if len(self.ssvep_buffer) == self.ssvep_buffer.maxlen:
+                            X = np.array(self.ssvep_buffer).T
+                            self.ssvep_buffer.clear()
+                            
+                            pred, _ = self.ssvep_classifier.classify_fbcca(X)
+                            self.ssvep_history.append(pred)
+                            
+                            if len(self.ssvep_history) == self.ssvep_history.maxlen:
+                                import collections
+                                counter = collections.Counter(self.ssvep_history)
+                                most_common_pred, count = counter.most_common(1)[0]
+                                if count > 2:
+                                    print(f"*** SSVEP STOP *** FOUND FREQ: {most_common_pred}")
+                                    self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common_pred}"], pylsl.local_clock())
+                                    self.ssvep_history.clear()
+                                    self.bci_mode = "P300" # Auto-reset
             await asyncio.sleep(0.01)
 
     async def marker_worker(self, marker_inlet):
@@ -216,6 +252,15 @@ class RealTimeInference:
                     group = list(m_str.replace("FLASH_GROUP_", ""))
                     self.current_trial_flashes.append((timestamp, group))
                     self.recorded_flashes.append({"time": timestamp, "group": group})
+                
+                elif m_str == "SSVEP_START":
+                    print("Switching engine to SSVEP Decoding...")
+                    self.bci_mode = "SSVEP"
+                    self.ssvep_buffer.clear()
+                    
+                elif m_str == "SSVEP_STOP":
+                    print("Switching engine to P300 Decoding...")
+                    self.bci_mode = "P300"
                 
                 elif m_str == "EVALUATE":
                     # The UI wants to know if we've found the letter yet.

@@ -111,7 +111,7 @@ def generate_flash_sequence(mode, target_char=None):
                     valid = False
                     break
     return seq
-def handle_prediction_screen(win, current_word, current_sentence, fps):
+def handle_prediction_screen(win, current_word, current_sentence, fps, outlet, dec_inlet):
     # Fetch predictions
     predictions = predict_words(current_word)
     if not predictions:
@@ -124,6 +124,10 @@ def handle_prediction_screen(win, current_word, current_sentence, fps):
     
     options = predictions + ["<-"]
     
+    # SSVEP Frequencies mapped to 60Hz frame intervals
+    frame_intervals = [6, 5, 4, 7, 8]
+    targets = [10.0, 12.0, 15.0, 8.57, 7.5]
+    
     # Setup UI elements
     stims = []
     x_pos = [-0.6, -0.3, 0.0, 0.3, 0.6]
@@ -133,6 +137,18 @@ def handle_prediction_screen(win, current_word, current_sentence, fps):
         
     timer_text = visual.TextStim(win, text="", pos=(0, -0.5), color='#FF0000', height=0.08)
     
+    # Static delay before SSVEP flashes start
+    timer_text.setText("Find your target...")
+    for _ in range(int(1.5 * fps)):
+        for stim in stims:
+            stim.draw()
+        timer_text.draw()
+        win.flip()
+        
+    if outlet:
+        import pylsl
+        outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
+    
     # 10s timeout loop
     timeout_frames = int(10.0 * fps)
     selected = None
@@ -141,20 +157,46 @@ def handle_prediction_screen(win, current_word, current_sentence, fps):
         time_left = 10 - (frame / fps)
         timer_text.setText(f"{time_left:.1f}s")
         
-        for stim in stims:
+        for i, stim in enumerate(stims):
+            # Flicker logic
+            if (frame // (frame_intervals[i] // 2)) % 2 == 0:
+                stim.color = '#FFFFFF'
+            else:
+                stim.color = '#262626'
             stim.draw()
+            
         timer_text.draw()
         win.flip()
+        
+        # Check backend for SSVEP Decoded Marker
+        if dec_inlet:
+            marker, _ = dec_inlet.pull_sample(timeout=0.0)
+            if marker and marker[0].startswith("SSVEP_DECODED_"):
+                try:
+                    freq = float(marker[0].replace("SSVEP_DECODED_", ""))
+                    if freq in targets:
+                        idx = targets.index(freq)
+                        selected = options[idx]
+                        break
+                except ValueError:
+                    pass
         
         # Mock SSVEP Selection using keys 1-5 for testing "on paper"
         keys = event.getKeys(keyList=['1', '2', '3', '4', '5', 'escape'])
         if 'escape' in keys:
+            if outlet:
+                import pylsl
+                outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
             core.quit()
         if keys:
             idx = int(keys[0]) - 1
             selected = options[idx]
             break
             
+    if outlet:
+        import pylsl
+        outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
+        
     if selected == "<-":
         current_word = current_word[:-1]
     elif selected and selected != "":
@@ -448,7 +490,7 @@ def main():
                 current_word += char_found
                 
                 if len(current_word) >= 2:
-                    current_word, current_sentence = handle_prediction_screen(win, current_word, current_sentence, args.fps)
+                    current_word, current_sentence = handle_prediction_screen(win, current_word, current_sentence, args.fps, outlet, dec_inlet)
                 
                 typed_text.setText(current_sentence + current_word)
                 
