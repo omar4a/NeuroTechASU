@@ -29,8 +29,7 @@ if os.path.isdir(_user_site) and _user_site not in sys.path:
 
 # Standard scientific BCI libraries
 from pyriemann.spatialfilters import Xdawn
-from pyriemann.estimation import XdawnCovariances
-from pyriemann.classification import MDM
+
 from mne.decoding import Vectorizer
 from sklearn.pipeline import make_pipeline
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -78,18 +77,7 @@ class RealTimeInference:
         self.recorded_flashes = []
         self.recorded_predictions = []
         
-        # Ensemble weight for LDA vs MDM. Measured: MDM via softmax-over-
-        # negative-Riemannian-distance is essentially uncalibrated noise
-        # (target p mean 0.513, non-target 0.484, std ~0.02), so mixing it
-        # with LDA at 0.5 halves LDA's effective signal. Keep at 1.0 until
-        # MDM is replaced with a proper calibration (Platt / isotonic).
-        self.active_algo = "ensemble"
-        self.ensemble_weight_lda = 1.0
-        
         self.model_lda = None
-        self.model_mdm = None
-        self._mdm_cov_transformer = None
-        self._mdm_classifier = None
         
         # LSL Outlet: How we talk back to the PsychoPy UI.
         # We don't create this until the model is trained.
@@ -115,54 +103,23 @@ class RealTimeInference:
         # Filter to use only our 8 EEG channels
         X = X[:, ACTIVE_CHANNEL_INDICES, :]
         
-        # Pipeline 1: xDAWN + LDA
+        # xDAWN + LDA Pipeline
         # xDAWN is a "spatial filter" that ignores noise and focuses on the P300.
         # LDA is a classic classifier that draws a line between Target and Non-Target.
         print("Training xDAWN + LDA Pipeline...")
         self.model_lda = make_pipeline(
-            Xdawn(nfilter=3),
+            Xdawn(nfilter=4),
             Vectorizer(),
-            LinearDiscriminantAnalysis(solver='lsqr', shrinkage=0.7)
+            LinearDiscriminantAnalysis(solver='eigen', shrinkage='auto')
         )
         self.model_lda.fit(X, y)
         
-        # Pipeline 2: Riemannian MDM
-        # This is high-level math that looks at the "geometry" of brain signals.
-        print("Training Riemannian MDM Pipeline...")
-        self._mdm_cov_transformer = XdawnCovariances(nfilter=3, estimator="oas")
-        self._mdm_classifier = MDM()
-        X_cov = self._mdm_cov_transformer.fit_transform(X, y)
-        self._mdm_classifier.fit(X_cov, y)
-        
-        print("Models Trained Successfully.")
+        print("Model Trained Successfully.")
         
         # Now publish the "Ready" signal for the UI
         info_dec = pylsl.StreamInfo('Speller_Decoded', 'Markers', 1, 0, 'string', 'bci_decoder_123')
         self.decoded_outlet = pylsl.StreamOutlet(info_dec)
 
-    def _mdm_predict_proba(self, X_test):
-        """
-        Calculates probabilities from the MDM model.
-        MDM normally just gives a "Yes/No", but we need a "How sure are you?" percentage.
-        """
-        X_cov = self._mdm_cov_transformer.transform(X_test)
-        from pyriemann.utils.distance import distance
-        
-        n_samples = X_cov.shape[0]
-        n_classes = len(self._mdm_classifier.classes_)
-        distances = np.zeros((n_samples, n_classes))
-        
-        # Measure how "far" the current brain wave is from the "Target" average.
-        for j, centroid in enumerate(self._mdm_classifier.covmeans_):
-            for i in range(n_samples):
-                distances[i, j] = distance(X_cov[i], centroid, metric=self._mdm_classifier.metric)
-        
-        # Convert distance to probability (closer = higher probability)
-        neg_distances = -distances
-        neg_distances -= neg_distances.max(axis=1, keepdims=True)
-        exp_neg_d = np.exp(neg_distances)
-        probs = exp_neg_d / exp_neg_d.sum(axis=1, keepdims=True)
-        return probs
 
     async def lsl_worker(self, inlet):
         """Continuously pulls EEG data into our 120-second ring buffer."""
@@ -294,6 +251,24 @@ class RealTimeInference:
 
         # 2. Filter the entire buffer to avoid filtfilt edge transients destroying the P300
         data_filtered = apply_preprocessing(data_arr)
+        
+        # Inject Real-Time ASR
+        import asrpy
+        import mne
+        # Transpose to [n_channels, n_samples] for asrpy
+        transposed_data = data_filtered.T
+        asr = asrpy.ASR(sfreq=FS, cutoff=20)
+        
+        # MNE constraint: asrpy needs mne RawArray
+        info = mne.create_info(ch_names=[f'CH{i}' for i in range(8)], sfreq=FS, ch_types='eeg')
+        raw = mne.io.RawArray(transposed_data, info, verbose=False)
+        
+        # Fit and transform
+        asr.fit(raw)
+        raw_clean = asr.transform(raw)
+        
+        # Transpose back to [n_samples, n_channels]
+        data_filtered = raw_clean.get_data().T
 
         X_test = []
         groups = []
@@ -359,14 +334,7 @@ class RealTimeInference:
         X_test = np.array(X_test)
         y_probs_lda = self.model_lda.predict_proba(X_test)[:, 1]
 
-        # Skip MDM when LDA is doing all the work — saves a full
-        # Riemannian-distance pass per EVALUATE.
-        if self.ensemble_weight_lda >= 1.0:
-            y_probs = y_probs_lda
-        else:
-            y_probs_mdm = self._mdm_predict_proba(X_test)[:, 1]
-            y_probs = (self.ensemble_weight_lda * y_probs_lda
-                       + (1 - self.ensemble_weight_lda) * y_probs_mdm)
+        y_probs = y_probs_lda
         
         # 5. Robust Additive Update: For every character, update its score.
         # Instead of using brittle log-probabilities, we simply add the raw probabilities.
