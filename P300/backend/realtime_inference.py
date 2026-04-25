@@ -15,6 +15,15 @@ How it works:
 
 import os
 import sys
+
+# PsychoPy Runner isolates the environment, stripping standard user site-packages.
+# We append the standard Python 3.10 and 3.14 user site-packages
+# to sys.path so that manually installed libraries (asrpy, pyriemann) are available.
+for version in ["310", "314"]:
+    _user_site = os.path.expanduser(fr"~\AppData\Roaming\Python\Python{version}\site-packages")
+    if os.path.isdir(_user_site) and _user_site not in sys.path:
+        sys.path.append(_user_site)
+
 import numpy as np
 import pylsl
 import asyncio
@@ -22,13 +31,8 @@ from collections import deque
 import pickle
 import math
 import scipy.special
-
-# PsychoPy Runner isolates the environment, stripping standard user site-packages.
-# We append the standard Python 3.10 user site (where pyriemann/mne/sklearn live)
-# to sys.path. We APPEND so that PsychoPy's own libraries take priority.
-_user_site = os.path.expanduser(r"~\AppData\Roaming\Python\Python310\site-packages")
-if os.path.isdir(_user_site) and _user_site not in sys.path:
-    sys.path.append(_user_site)
+import asrpy
+import mne
 
 # Standard scientific BCI libraries
 from pyriemann.spatialfilters import Xdawn
@@ -83,6 +87,7 @@ class RealTimeInference:
         self.model_lda = None
         self.kde_target = None
         self.kde_nontarget = None
+        self.asr_filter = None
         
         # LSL Outlet: How we talk back to the PsychoPy UI.
         # We don't create this until the model is trained.
@@ -127,7 +132,16 @@ class RealTimeInference:
             self.kde_target = kdes['target']
             self.kde_nontarget = kdes['nontarget']
             
-        print("Model and KDEs Trained & Loaded Successfully.")
+        # [TASK 2] Load Pre-fitted ASR State
+        print("Loading Pre-fitted ASR State...")
+        asr_path = os.path.join(TRAINING_DATA_DIR, "asr_state.pkl")
+        if os.path.exists(asr_path):
+            with open(asr_path, 'rb') as f:
+                self.asr_filter = pickle.load(f)
+        else:
+            print("WARNING: asr_state.pkl not found. ASR filtering will be unavailable.")
+
+        print("Model, KDEs, and ASR State Loaded Successfully.")
         
         # Now publish the "Ready" signal for the UI
         info_dec = pylsl.StreamInfo('Speller_Decoded', 'Markers', 1, 0, 'string', 'bci_decoder_123')
@@ -265,20 +279,19 @@ class RealTimeInference:
         # 2. Filter the entire buffer to avoid filtfilt edge transients destroying the P300
         data_filtered = apply_preprocessing(data_arr)
         
-        # Inject Real-Time ASR
-        import asrpy
-        import mne
-        # Transpose to [n_channels, n_samples] for asrpy
+        # [TASK 2] Fast Real-Time ASR (Transform Only)
+        if self.asr_filter is None:
+            raise RuntimeError("CRITICAL: ASR filter state not loaded. Run apply_offline_asr.py first!")
+
+        # Transpose to [n_channels, n_samples] as expected by asrpy
         transposed_data = data_filtered.T
-        asr = asrpy.ASR(sfreq=FS, cutoff=20)
         
-        # MNE constraint: asrpy needs mne RawArray
+        # MNE constraint: asrpy.ASR.transform strictly requires an mne.Raw object
         info = mne.create_info(ch_names=[f'CH{i}' for i in range(8)], sfreq=FS, ch_types='eeg')
         raw = mne.io.RawArray(transposed_data, info, verbose=False)
         
-        # Fit and transform
-        asr.fit(raw)
-        raw_clean = asr.transform(raw)
+        # Apply the pre-fitted filter (No fit() call here to avoid thread blocking)
+        raw_clean = self.asr_filter.transform(raw)
         
         # Transpose back to [n_samples, n_channels]
         data_filtered = raw_clean.get_data().T

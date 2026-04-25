@@ -2,6 +2,7 @@ import os
 import sys
 import numpy as np
 import asrpy
+import pickle
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 from sklearn.pipeline import make_pipeline
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
@@ -104,6 +105,14 @@ def main():
     
     # Fit ASR to the data (finds clean reference portions automatically)
     asr.fit(raw)
+    
+    # [TASK 1] Serialize the fitted ASR object for real-time state preservation
+    train_dir = os.path.join(os.path.dirname(__file__), "training_data")
+    os.makedirs(train_dir, exist_ok=True)
+    asr_state_path = os.path.join(train_dir, "asr_state.pkl")
+    with open(asr_state_path, 'wb') as f:
+        pickle.dump(asr, f)
+    print(f"Successfully saved ASR state to: {asr_state_path}")
     
     # Apply ASR to scrub artifacts
     raw_clean = asr.transform(raw)
