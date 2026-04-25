@@ -14,6 +14,11 @@ if not hasattr(np, 'object'): np.object = object
 from psychopy import visual, core, event
 import pylsl
 
+import sys, os
+speller_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "speller")
+sys.path.insert(0, speller_path)
+from speller import predict_words, respond_to_sentence
+
 matrixChars = [
     ['A', 'B', 'C', 'D', 'E', 'F'],
     ['G', 'H', 'I', 'J', 'K', 'L'],
@@ -106,6 +111,70 @@ def generate_flash_sequence(mode, target_char=None):
                     valid = False
                     break
     return seq
+def handle_prediction_screen(win, current_word, current_sentence, fps):
+    # Fetch predictions
+    predictions = predict_words(current_word)
+    if not predictions:
+        return current_word, current_sentence
+
+    # Ensure we have 4 predictions
+    while len(predictions) < 4:
+        predictions.append("")
+    predictions = predictions[:4]
+    
+    options = predictions + ["<-"]
+    
+    # Setup UI elements
+    stims = []
+    x_pos = [-0.6, -0.3, 0.0, 0.3, 0.6]
+    for i, text in enumerate(options):
+        stim = visual.TextStim(win, text=text, pos=(x_pos[i], 0), color='#FFFFFF', height=0.1)
+        stims.append(stim)
+        
+    timer_text = visual.TextStim(win, text="", pos=(0, -0.5), color='#FF0000', height=0.08)
+    
+    # 10s timeout loop
+    timeout_frames = int(10.0 * fps)
+    selected = None
+    
+    for frame in range(timeout_frames):
+        time_left = 10 - (frame / fps)
+        timer_text.setText(f"{time_left:.1f}s")
+        
+        for stim in stims:
+            stim.draw()
+        timer_text.draw()
+        win.flip()
+        
+        # Mock SSVEP Selection using keys 1-5 for testing "on paper"
+        keys = event.getKeys(keyList=['1', '2', '3', '4', '5', 'escape'])
+        if 'escape' in keys:
+            core.quit()
+        if keys:
+            idx = int(keys[0]) - 1
+            selected = options[idx]
+            break
+            
+    if selected == "<-":
+        current_word = current_word[:-1]
+    elif selected and selected != "":
+        current_sentence += selected + " "
+        current_word = ""
+        
+    return current_word, current_sentence
+
+def display_response_screen(win, sentence, fps):
+    response = respond_to_sentence(sentence, "")
+    
+    resp_text = visual.TextStim(win, text=response, pos=(0, 0), color='#FFFFFF', height=0.08, wrapWidth=1.5)
+    inst_text = visual.TextStim(win, text="(Press ESC to exit)", pos=(0, -0.8), color='#555555', height=0.05)
+    
+    while True:
+        resp_text.draw()
+        inst_text.draw()
+        win.flip()
+        if event.getKeys(keyList=['escape']):
+            break
 
 
 def main():
@@ -291,7 +360,8 @@ def main():
             draw_all()
             win.flip()
 
-    current_spelled = ""
+    current_word = ""
+    current_sentence = ""
 
     if args.inference:
         print("Connecting to Backend Decoded marker stream (waiting for model training)...")
@@ -375,8 +445,12 @@ def main():
                                 break
                             
             if char_found:
-                current_spelled += char_found
-                typed_text.setText(current_spelled)
+                current_word += char_found
+                
+                if len(current_word) >= 2:
+                    current_word, current_sentence = handle_prediction_screen(win, current_word, current_sentence, args.fps)
+                
+                typed_text.setText(current_sentence + current_word)
                 
                 # 3 sec illuminated preparation period between letters.
                 # All letters light up in faint white so the user can locate
@@ -395,6 +469,8 @@ def main():
                         
         # Inference complete, tell backend to save the recording
         outlet.push_sample(["SESSION_END"], pylsl.local_clock())
+        
+        display_response_screen(win, current_sentence + current_word, args.fps)
                 
     else:
         # SUPERVISED TRAINING
@@ -430,8 +506,8 @@ def main():
                         win.close()
                         core.quit()
                         
-            current_spelled += char
-            typed_text.setText(current_spelled)
+            current_word += char
+            typed_text.setText(current_word)
             
             # 3 sec illuminated preparation period between letters.
             # All letters light up in faint white so the user can locate
