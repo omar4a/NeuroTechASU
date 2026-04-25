@@ -361,7 +361,7 @@ class RealTimeInference:
         # bias toward MATRIX_CHARS[0] ('A'). Surface the failure instead so
         # the UI can prompt a repeat or the session can be flagged.
         if np.ptp(scores_arr) < 1e-9:
-            return None, False
+            return "!", False
 
         # Use successfully-updated-flash count as the denominator, not
         # _processed_flash_idx — the latter counts artifact-rejected flashes
@@ -369,7 +369,7 @@ class RealTimeInference:
         # confidence in high-artifact sessions.
         flashes_processed = self._n_decoder_updates
         if flashes_processed == 0:
-            return None, False
+            return "!", False
 
         best_char = max(self._accumulated_scores.items(), key=lambda kv: kv[1])[0]
 
