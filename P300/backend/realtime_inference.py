@@ -113,10 +113,11 @@ class RealTimeInference:
         
         # [NEW] Project 2: BCI States & Buffers
         self.bci_mode = "P300" # Toggles between P300 and SSVEP
-        self.ssvep_targets = [8.0, 10.0, 12.0, 15.0, 17.0] # 5 optimized options
+        self.ssvep_targets = [8.0, 10.0, 12.0, 15.0, 17.0] # 5 optimized options. Unused frequencies act as 'Otherwise' noise catchers.
         self.ssvep_classifier = SSVEPClassifier(targets=self.ssvep_targets)
-        self.ssvep_buffer = deque(maxlen=int(FS * 1.0)) # 1-second rolling window
-        self.ssvep_history = deque(maxlen=5) # 5-second voting window
+        self.ssvep_buffer = deque(maxlen=int(FS * 1.0)) # 1.0-second discrete window
+        self.ssvep_window_size = 6
+        self.ssvep_history = deque(maxlen=self.ssvep_window_size) # Dynamic voting window
         self.roi_indices = [5, 6, 7] # PO7, Oz, PO8 indices for SSVEP
         
         self.context_word = ""
@@ -226,15 +227,19 @@ class RealTimeInference:
                             X = np.array(self.ssvep_buffer).T # (Channels, Samples)
                             self.ssvep_buffer.clear()
                             
+                            # EXACT MATCH to ssvep_realtime.py: Standard CCA, no threshold
                             pred, _ = self.ssvep_classifier.classify_cca(X)
                             self.ssvep_history.append(pred)
                             
-                            # Majority voter: 3 out of 4 identical predictions
+                            # Majority voter
                             if len(self.ssvep_history) == self.ssvep_history.maxlen:
                                 from collections import Counter
                                 counts = Counter(self.ssvep_history)
                                 most_common, count = counts.most_common(1)[0]
-                                if count > 3: # Need 4/5 or 5/5 agreement (5-second window)
+                                
+                                # Require 4 out of 6 majority
+                                required_votes = 4
+                                if count >= required_votes:
                                     print(f"*** SSVEP DETECTED: {most_common} Hz ***")
                                     self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common}"], pylsl.local_clock())
                                     self.ssvep_history.clear()
@@ -267,13 +272,19 @@ class RealTimeInference:
 
                 elif m_str.startswith("SET_CONTEXT:"):
                     self.context_word = m_str.replace("SET_CONTEXT:", "").strip()
-                    print(f"Global Context Updated: {self.context_word}")
+                    # The UI sends this after the user finishes spelling the context word.
+                    # We must completely wipe the sentence buffers so the context word
+                    # isn't accidentally included in the main sentence to the LLM.
+                    self.current_word = ""
+                    self.sentence_history = ""
+                    print(f"Global Context Updated: {self.context_word} (Speller Reset)")
                 
-                elif m_str == "SSVEP_START":
-                    print("Backend switching to SSVEP mode...")
+                elif m_str.startswith("SSVEP_START"):
+                    print(f"Backend switching to SSVEP mode... ({m_str})")
                     self.bci_mode = "SSVEP"
+                    self.ssvep_window_size = 6
                     self.ssvep_buffer.clear()
-                    self.ssvep_history.clear()
+                    self.ssvep_history = deque(maxlen=self.ssvep_window_size)
                 
                 elif m_str == "SSVEP_TIMEOUT":
                     print("Backend reverting to P300 mode (SSVEP Timeout)...")
@@ -287,6 +298,12 @@ class RealTimeInference:
                     # Update sentence history for future LLM predictions
                     self.sentence_history += (" " if self.sentence_history else "") + selected_word
                     # RESET the prefix buffer because a word was completed
+                    self.current_word = ""
+                    self.bci_mode = "P300"
+                    
+                elif m_str == "RESPONSE_ACK":
+                    print("Backend reverting to P300 mode (Response Acknowledged)")
+                    self.sentence_history = ""
                     self.current_word = ""
                     self.bci_mode = "P300"
                 
@@ -352,7 +369,7 @@ class RealTimeInference:
 
     def _handle_character_decoded(self, char):
         """Internal logic to manage words/sentences and trigger LLM."""
-        if char == "9": # Backspace (As per Engineering Spec)
+        if char == "8": # Backspace moved to 8
             if self.current_word:
                 self.current_word = self.current_word[:-1]
             elif self.sentence_history:
@@ -361,10 +378,15 @@ class RealTimeInference:
                     self.current_word = parts[-1]
                     self.sentence_history = " ".join(parts[:-1])
             print(f"  [BACKSPACE] Word: '{self.current_word}' | History: '{self.sentence_history}'")
-        elif char == "_": # Space / End of word
+        elif char == "9": # Submit to AI
             self.sentence_history += (" " if self.sentence_history else "") + self.current_word
             self.current_word = ""
-            print(f"  [SPACE] Current Sentence: '{self.sentence_history}'")
+            print(f"  [SUBMIT] Sending to LLM: '{self.sentence_history}'")
+            asyncio.create_task(self.generate_response(self.sentence_history))
+        elif char == "_": # Space / Add word directly
+            self.sentence_history += (" " if self.sentence_history else "") + self.current_word
+            self.current_word = ""
+            print(f"  [SPACE] Added word to sentence. Sentence now: '{self.sentence_history}'")
         else:
             self.current_word += char
             # Trigger LLM async prediction for the current word fragment
@@ -549,7 +571,7 @@ class RealTimeInference:
 
     # [NEW] Project 2: LLM Word Completion Hook
     async def predict_words(self, partial_word):
-        """Async call to Groq for word completion and self-reported confidence."""
+        """Async call to Gemini for word completion using self-reported probabilities and Uncertainty Ratio."""
         if not partial_word or partial_word == "_":
             return
             
@@ -562,14 +584,17 @@ class RealTimeInference:
             f"1) CONTEXT: '{self.context_word}'\n"
             f"2) PREFIX (spelled letters so far): '{partial_word}'\n"
             f"3) SENTENCE (words typed so far): '{self.sentence_history}'\n\n"
-            "Output exactly 5 single-word completion suggestions as a comma-separated list in 'word:prob' format.\n"
-            "Example: brain:0.8, bread:0.05, bring:0.05, bridge:0.05, bright:0.05.\n"
+            "Output exactly 4 single-word completion suggestions as a comma-separated list in 'word:prob' format.\n"
+            "Example: brain:0.8, bread:0.05, bring:0.05, bridge:0.1.\n"
             "The sum of probabilities should reflect your confidence that the intended word is in this list."
         )
         
         try:
             client = _client.get_client("SPELLER")
             model = _client._get_model_for_type("SPELLER")
+            
+            import time
+            start_t = time.time()
             
             # Offload blocking API call to a thread
             loop = asyncio.get_running_loop()
@@ -580,6 +605,9 @@ class RealTimeInference:
                 temperature=0.0
             ))
             
+            end_t = time.time()
+            print(f"  [SPELLER_LLM] Inference time: {(end_t - start_t)*1000:.1f}ms")
+            
             content = response.choices[0].message.content
             # Parse Format: word:prob, word:prob...
             pairs = [p.strip().split(":") for p in content.split(",")]
@@ -587,31 +615,122 @@ class RealTimeInference:
             words = []
             probs = []
             for p in pairs:
-                if len(p) == 2:
+                if len(p) >= 2:
                     words.append(p[0].strip())
                     try:
                         probs.append(float(p[1].strip()))
                     except:
                         probs.append(0.0)
             
-            if len(words) < 5: 
-                words += [""] * (5 - len(words))
-                probs += [0.0] * (5 - len(probs))
+            if len(words) < 4: 
+                words += [""] * (4 - len(words))
+                probs += [0.0] * (4 - len(probs))
             
-            words = words[:5]
-            probs = probs[:5]
-            cum_prob = sum(probs)
+            words = words[:4]
+            probs = probs[:4]
             
-            print(f"  Predictions: {words} | Cumulative Confidence: {cum_prob:.3f}")
+            # OPTION 3: Uncertainty Ratio
+            # Instead of summing, we check if the top predicted word is significantly more likely.
+            p_top1 = probs[0]
+            p_top2 = probs[1]
+            uq_ratio = p_top1 / (p_top2 + 1e-12)
             
-            # If high confidence (> threshold), tell UI to switch to SSVEP screen
-            if cum_prob > self.llm_threshold:
-                print("  [LLM] High confidence. Triggering SSVEP UI...")
+            # Map the UI's 0-1 confidence slider to a mathematically rigorous ratio
+            # e.g., 0.75 -> 3.0 (Top word is 3x more likely)
+            # e.g., 0.80 -> 4.0 (Top word is 4x more likely)
+            dynamic_ratio_threshold = self.llm_threshold / max(0.001, (1.0 - self.llm_threshold))
+            
+            print(f"  Predictions: {words} | Probabilities: {probs}")
+            print(f"  Uncertainty Ratio (Top 1 / Top 2): {uq_ratio:.1f} (Required: {dynamic_ratio_threshold:.1f})")
+            
+            # Use >= with a tiny epsilon (1e-4) to fix IEEE 754 floating-point division errors
+            # (e.g., 0.6 / 0.2 evaluates to 2.9999999999999996 instead of 3.0)
+            if uq_ratio >= (dynamic_ratio_threshold - 1e-4):
+                print(f"  [LLM] High confidence (Ratio >= {dynamic_ratio_threshold:.1f}). Triggering SSVEP UI...")
                 marker = f"SSVEP_PREDICTIONS:{','.join(words)}"
                 self.decoded_outlet.push_sample([marker], pylsl.local_clock())
                 
         except Exception as e:
             print(f"  [LLM ERROR] {e}")
+
+    def _get_concentration_state(self):
+        """Calculates a simple Beta/Alpha ratio from the last 10 seconds of EEG."""
+        import scipy.signal
+        if len(self.eeg_data) < FS * 10:
+            return "Unknown"
+            
+        # Get last 10 seconds, average across all 8 channels
+        recent_data = np.array(list(self.eeg_data)[-int(FS * 10):])[:, :8]
+        
+        # Calculate PSD using Welch
+        freqs, psd = scipy.signal.welch(recent_data, fs=FS, axis=0, nperseg=int(FS*2))
+        
+        # Average PSD across all channels
+        psd_mean = np.mean(psd, axis=1)
+        
+        alpha_power = np.sum(psd_mean[np.logical_and(freqs >= 8, freqs <= 13)])
+        beta_power = np.sum(psd_mean[np.logical_and(freqs >= 13, freqs <= 30)])
+        
+        ratio = beta_power / (alpha_power + 1e-9)
+        
+        print(f"  [METRICS] Beta/Alpha Ratio: {ratio:.2f}")
+        return "Focused" if ratio > 0.8 else "Fatigued"
+
+    # [NEW] Project 2: LLM Sentence Response Hook
+    async def generate_response(self, text):
+        """Async call to Gemini for full sentence response."""
+        if not text.strip():
+            return
+            
+        concentration_state = self._get_concentration_state()
+        print(f"Generating full response for: '{text}' (Context: {self.context_word}) | State: {concentration_state}")
+        
+        if concentration_state == "Focused":
+            length_instruction = "The user's brain waves indicate they are deeply FOCUSED. Generate a highly detailed, comprehensive, and rich response."
+        elif concentration_state == "Fatigued":
+            length_instruction = "The user's brain waves indicate they are FATIGUED. Generate an extremely brief, concise, and straight-to-the-point response."
+        else:
+            length_instruction = "Generate a concise and thoughtful response."
+            
+        system_prompt = (
+            "You are an AI assistant helping a user who communicates via a Brain-Computer Interface (BCI).\n"
+            "Because they are spelling via a BCI, their input may contain typos, missing words, or strange grammatical structures. "
+            "Interpret their intended meaning gracefully.\n\n"
+            f"The user's context is: {self.context_word}\n\n"
+            f"{length_instruction}"
+        )
+        
+        try:
+            client = _client.get_client("RESPONSE")
+            model = _client._get_model_for_type("RESPONSE")
+            
+            import time
+            start_t = time.time()
+            
+            loop = asyncio.get_running_loop()
+            response = await loop.run_in_executor(None, lambda: client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": text}],
+                temperature=0.7
+            ))
+            
+            end_t = time.time()
+            print(f"  [RESPONSE_LLM] Inference time: {(end_t - start_t)*1000:.1f}ms")
+            
+            content = response.choices[0].message.content.strip()
+            # Remove any colons or newlines to avoid LSL marker parsing issues
+            content = content.replace(":", "-").replace("\n", " ")
+            
+            print(f"  [RESPONSE_LLM] Output: {content}")
+            
+            marker = f"LLM_RESPONSE:{content}"
+            self.decoded_outlet.push_sample([marker], pylsl.local_clock())
+                
+        except Exception as e:
+            print(f"  [RESPONSE_LLM ERROR] {e}")
+            marker = f"LLM_RESPONSE:Error generating response."
+            self.decoded_outlet.push_sample([marker], pylsl.local_clock())
 
     def _reset_trial_state(self):
         """Clear memory for a new letter."""

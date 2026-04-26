@@ -117,7 +117,7 @@ def main():
         '01. System Mode': ['Project 2: LLM Speller', 'Standalone Training'],
         '02. Keyboard Mode': ['2: Checkerboard (CBP)', '1: Row-Column (RCP)'],
         '03. LLM Trigger Conf (0-1)': '0.8',
-        '04. SSVEP Timeout (s)': '10',
+        '04. SSVEP Timeout (s)': '15',
         '05. Target Word (Training Only)': 'NEUROTECH',
         '06. Inference Trials': '5',
         '07. Blocks (Flashes)': '10',
@@ -220,6 +220,7 @@ def main():
     instruction = visual.TextStim(win, text="Initializing...", pos=(0, 0.85), color=FLASH_COLOR, height=0.08)
     typed_text = visual.TextStim(win, text="", pos=(0, -0.85), color='#FFFFFF', height=0.1)
     context_label = visual.TextStim(win, text="", pos=(0, 0.95), color='#00FFFF', height=0.05) # Cyan context word
+    llm_response_text = visual.TextStim(win, text="", pos=(0, 0.2), color='#FFFFFF', height=0.08, wrapWidth=1.5)
     
     # Pre-compute frames for exact 150ms timings (300ms ISI total)
     # 300ms ISI eliminates ERP temporal overlap entirely.
@@ -305,7 +306,7 @@ def main():
     state_start_time = core.getTime()
     autocomplete_words = []
     ssvep_freqs_context = [10.0, 15.0]
-    ssvep_freqs_auto = [8.0, 10.0, 12.0, 15.0, 17.0]
+    ssvep_freqs_auto = [8.57, 10.0, 12.0, 15.0]
 
     if args.inference:
         dec_inlet = None
@@ -375,9 +376,16 @@ def main():
                                 outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
                                 state_start_time = core.getTime()
                                 break
-                    if current_state == "AUTOCOMPLETE_SSVEP": break
+                            elif marker[0].startswith("LLM_RESPONSE:"):
+                                response_content = marker[0].replace("LLM_RESPONSE:", "")
+                                llm_response_text.setText(response_content)
+                                current_state = "LLM_RESPONSE_SCREEN"
+                                outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
+                                state_start_time = core.getTime()
+                                break
+                    if current_state == "AUTOCOMPLETE_SSVEP" or current_state == "LLM_RESPONSE_SCREEN": break
                     if not char_found: outlet.push_sample(["EVALUATE"], pylsl.local_clock())
-                if current_state == "AUTOCOMPLETE_SSVEP": continue
+                if current_state == "AUTOCOMPLETE_SSVEP" or current_state == "LLM_RESPONSE_SCREEN": continue
                 if not char_found:
                     outlet.push_sample(["TRIAL_END"], pylsl.local_clock())
                     for _ in range(int(3.0 * args.fps)):
@@ -390,15 +398,28 @@ def main():
                     if current_state == "CONTEXT_P300":
                         if char_found == "_":
                             current_state = "MAIN_SPELLER"
-                            context_label.setText(f"CONTEXT: {current_context}")
+                            # The user requested the context word disappears from the screen
+                            context_label.setText("") 
+                            instruction.setText("P300: Spell Word")
                             outlet.push_sample([f"SET_CONTEXT:{current_context}"], pylsl.local_clock())
-                        elif char_found == "9": current_context = current_context[:-1]
-                        else: current_context += char_found
-                        instruction.setText(f"Context: {current_context}")
+                        elif char_found == "8": 
+                            current_context = current_context[:-1]
+                        elif char_found == "9":
+                            pass # 9 is submit, ignore in context mode
+                        else: 
+                            current_context += char_found
+                            
+                        if current_state == "CONTEXT_P300":
+                            instruction.setText(f"Context: {current_context}")
                     else:
-                        if char_found == "9": current_spelled = current_spelled[:-1]
-                        elif char_found == "_": current_spelled += " "
-                        else: current_spelled += char_found
+                        if char_found == "8": 
+                            current_spelled = current_spelled[:-1]
+                        elif char_found == "_": 
+                            current_spelled += " "
+                        elif char_found == "9": 
+                            current_spelled = "" # Visually wipe the spelling line on submit
+                        else: 
+                            current_spelled += char_found
                         typed_text.setText(current_spelled)
                 for row in grid_stims:
                     for stim in row: stim.color = READY_COLOR
@@ -408,19 +429,21 @@ def main():
                     for stim in row: stim.color = DIM_COLOR
 
             elif current_state == "AUTOCOMPLETE_SSVEP":
-                instruction.setText(f"Autocomplete: Select Word or wait {int(args.ssvep_timeout)}s to cancel")
-                # 5-point distributed layout (corners + center)
-                positions = [(-700, 350), (700, 350), (0, 0), (-700, -350), (700, -350)]
+                # 4-point distributed layout mapped to the extreme corners using normalized units
+                positions = [(-0.85, 0.75), (0.85, 0.75), (-0.85, -0.75), (0.85, -0.75)]
                 for i, (word, freq) in enumerate(zip(autocomplete_words, ssvep_freqs_auto)):
                     pos = positions[i]
-                    box = visual.Rect(win, width=350, height=350, pos=pos, 
-                                      fillColor=[1, 1, 1], units='pix')
+                    # Dotted/Checkerboard pattern to reduce glare (sf controls the number of dots)
+                    box = visual.GratingStim(win, tex='sqrXsqr', size=(0.35, 0.35), pos=pos, 
+                                             sf=15.0, color=[1, 1, 1], contrast=0.6, units='norm')
+                    # High contrast dark plate behind the text
+                    bg = visual.Rect(win, width=0.35, height=0.15, pos=pos, fillColor=[-0.9, -0.9, -0.9], units='norm')
                     lbl = visual.TextStim(win, text=word, pos=pos, 
-                                          color=[-1, -1, -1], height=50, bold=True, units='pix', wrapWidth=320)
+                                          color=[1, 1, 1], height=0.12, bold=True, units='norm', wrapWidth=0.35)
                     if math.sin(2 * math.pi * freq * t) > 0:
                         box.draw()
+                        bg.draw()
                         lbl.draw()
-                instruction.draw()
                 win.flip()
                 if core.getTime() - state_start_time > args.ssvep_timeout:
                     current_state = "MAIN_SPELLER"
@@ -441,6 +464,38 @@ def main():
                         outlet.push_sample([f"WORD_SELECTED:{selected_word}"], pylsl.local_clock())
                         state_start_time = core.getTime()
                     except ValueError: pass
+
+            elif current_state == "LLM_RESPONSE_SCREEN":
+                llm_response_text.draw()
+                
+                elapsed_time = core.getTime() - state_start_time
+                
+                if elapsed_time > 5.0:
+                    # Place Continue in the bottom right corner
+                    pos = (0.85, -0.75)
+                    box = visual.GratingStim(win, tex='sqrXsqr', size=(0.35, 0.3), pos=pos, 
+                                             sf=15.0, color=[1, 1, 1], contrast=0.6, units='norm')
+                    bg = visual.Rect(win, width=0.35, height=0.15, pos=pos, fillColor=[-0.9, -0.9, -0.9], units='norm')
+                    lbl = visual.TextStim(win, text="Continue", pos=pos, 
+                                          color=[1, 1, 1], height=0.12, bold=True, units='norm')
+                    
+                    if math.sin(2 * math.pi * 15.0 * t) > 0:
+                        box.draw()
+                        bg.draw()
+                        lbl.draw()
+                
+                win.flip()
+                
+                marker, _ = dec_inlet.pull_sample(timeout=0.0)
+                if marker and marker[0].startswith("SSVEP_DECODED_"):
+                    if elapsed_time > 5.0:
+                        f = float(marker[0].replace("SSVEP_DECODED_", ""))
+                        if f == 15.0:
+                            current_spelled = ""
+                            typed_text.setText("")
+                            current_state = "MAIN_SPELLER"
+                            outlet.push_sample(["RESPONSE_ACK"], pylsl.local_clock())
+                            state_start_time = core.getTime()
     else:
         for char in args.word:
             pos = get_char_pos(char)
