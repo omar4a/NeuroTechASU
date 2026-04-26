@@ -1,5 +1,5 @@
 
---- BACKEND DEBUG LOG STARTED: 53199.7212361 ---
+--- BACKEND DEBUG LOG STARTED: 56915.8709831 ---
 Resolving LSL Streams...
 Training models in background...
 Synchronizing LSL clocks... (3 seconds)
@@ -10,73 +10,8 @@ Loading Pre-fitted ASR State...
 Model, KDEs, and ASR State Loaded Successfully.
 
 [READY] Engine active and models trained. Decoding dynamic markers...
-Backend switching to SSVEP mode... (SSVEP_START)
+Backend switching to SSVEP mode (targets: [10.0, 15.0])
 LLM Trigger Threshold Updated: 0.5
 [READY] Clock sync complete. Pulling data.
-*** SSVEP DETECTED: 12.0 Hz ***
-New letter trial starting...
-  [EVAL] A: P=0.566 | UQ Ratio=6.1
-  [EVAL] B: P=0.557 | UQ Ratio=3.0
-  [EVAL] B: P=0.880 | UQ Ratio=14.1
-  [EVAL] B: P=0.989 | UQ Ratio=108.5
-*** DYNAMIC STOP *** FOUND: B
-New letter trial starting...
-  [EVAL] J: P=0.632 | UQ Ratio=11.1
-  [EVAL] R: P=0.792 | UQ Ratio=5.5
-  [EVAL] R: P=0.940 | UQ Ratio=16.5
-  [EVAL] R: P=0.959 | UQ Ratio=24.2
-  [EVAL] R: P=0.957 | UQ Ratio=42.7
-  [EVAL] R: P=0.954 | UQ Ratio=21.8
-  [EVAL] R: P=0.992 | UQ Ratio=136.1
-*** DYNAMIC STOP *** FOUND: R
-Fetching predictions for: 'BR' (Context: )
-  [SPELLER_LLM] Inference time: 905.4ms
-  Predictions: ['Bring', 'Break', 'Brief', 'Bright'] | Probabilities: [0.4, 0.3, 0.15, 0.15]
-  Uncertainty Ratio (Top 1 / Top 2): 1.3 (Required: 1.0)
-  [LLM] High confidence (Ratio >= 1.0). Triggering SSVEP UI...
-New letter trial starting...
-Backend switching to SSVEP mode... (SSVEP_START)
-Backend reverting to P300 mode (SSVEP Timeout)...
-New letter trial starting...
-  [EVAL] Q: P=0.181 | UQ Ratio=1.4
-  [EVAL] D: P=0.464 | UQ Ratio=1.6
-  [EVAL] A: P=0.663 | UQ Ratio=3.1
-  [EVAL] A: P=0.951 | UQ Ratio=35.8
-  [EVAL] A: P=0.982 | UQ Ratio=91.6
-  [EVAL] A: P=0.998 | UQ Ratio=1225.0
-*** DYNAMIC STOP *** FOUND: A
-Fetching predictions for: 'BRA' (Context: )
-  [SPELLER_LLM] Inference time: 691.2ms
-  Predictions: ['Brain', 'Branch', 'Brand', 'Brave'] | Probabilities: [0.4, 0.3, 0.2, 0.1]
-  Uncertainty Ratio (Top 1 / Top 2): 1.3 (Required: 1.0)
-  [LLM] High confidence (Ratio >= 1.0). Triggering SSVEP UI...
-New letter trial starting...
-Backend switching to SSVEP mode... (SSVEP_START)
-*** SSVEP DETECTED: 12.0 Hz ***
-Backend reverting to P300 mode (Selected: Brand)
-New letter trial starting...
-  [EVAL] K: P=0.160 | UQ Ratio=1.0
-  [EVAL] _: P=0.412 | UQ Ratio=1.1
-  [EVAL] 4: P=0.225 | UQ Ratio=1.1
-  [EVAL] 7: P=0.190 | UQ Ratio=1.0
-  [EVAL] 4: P=0.389 | UQ Ratio=1.1
-  [EVAL] 4: P=0.387 | UQ Ratio=1.1
-  [EVAL] 4: P=0.457 | UQ Ratio=2.7
-  [EVAL] 9: P=0.421 | UQ Ratio=1.2
-  [EVAL] 9: P=0.814 | UQ Ratio=6.4
-  [EVAL] 9: P=0.975 | UQ Ratio=54.1
-TRIAL_END received. Waiting for last brainwaves to arrive...
----------> FINAL GUESS: 9 <---------
-  [SUBMIT] Sending to LLM: 'Brand '
-  [METRICS] Beta/Alpha Ratio: 1.73
-Generating full response for: 'Brand ' (Context: ) | State: Focused
-Response generation failed: LLM API request failed: Error code: 400 - [{'error': {'code': 400, 'message': 'Developer instruction is not enabled for models/gemma-3-27b-it', 'status': 'INVALID_ARGUMENT'}}]
-  [RESPONSE_LLM] Inference time: 543.6ms
-  [RESPONSE_LLM] Output: Error generating response.
-New letter trial starting...
-Backend switching to SSVEP mode... (SSVEP_START)
-*** SSVEP DETECTED: 17.0 Hz ***
 
-Saving inference recording for post-hoc diagnosis...
-Inference recording saved to 'inference_recording/' directory.
-
+CRITICAL ENGINE FAILURE: 'charmap' codec can't encode character '\u03c1' in position 19: character maps to <undefined>

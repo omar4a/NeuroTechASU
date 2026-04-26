@@ -305,8 +305,54 @@ def main():
     current_state = "CONTEXT_SSVEP"
     state_start_time = core.getTime()
     autocomplete_words = []
-    ssvep_freqs_context = [10.0, 15.0]
-    ssvep_freqs_auto = [8.57, 10.0, 12.0, 15.0]
+    undo_stack_ui = []  # Mirrors backend's undo stack for display state
+    # ── SSVEP Frequencies: EXACT MATCH to SSVEP Protocol/ssvep_realtime.py ──
+    # Using the proven 3-frequency set that the standalone SSVEP testbench
+    # validated with real CCA/FBCCA classification on the Unicorn headset.
+    ssvep_freqs_context = [10.0, 15.0]        # 2 choices: Enter Context / No Context
+    ssvep_freqs_auto = [10.0, 12.0, 15.0]     # 3 word choices (matched to classifier)
+
+    # ── Pre-create SSVEP Stimulus Objects ──
+    # Exact visual replica of SSVEP Protocol's tkinter GUI:
+    #   - Large white boxes (350×350 px equivalent)
+    #   - Dark text labels on white background
+    #   - Maximum spatial separation for SSVEP isolation
+    # Pre-creating avoids per-frame object instantiation overhead that
+    # causes timing jitter and breaks the flicker frequency.
+
+    # Context screen: 2 large boxes, left and right
+    ctx_boxes = []
+    ctx_labels = []
+    ctx_label_texts = ["Enter Context", "No Context"]
+    ctx_positions_px = [(-500, 0), (500, 0)]  # Maximum horizontal spacing
+    for i in range(2):
+        box = visual.Rect(win, width=350, height=350, pos=ctx_positions_px[i],
+                          fillColor=[1, 1, 1], lineColor=[0, 0.72, 0.66],
+                          lineWidth=4, units='pix')
+        lbl = visual.TextStim(win, text=ctx_label_texts[i], pos=ctx_positions_px[i],
+                              color=[-1, -1, -1], height=60, bold=True,
+                              units='pix', wrapWidth=320)
+        ctx_boxes.append(box)
+        ctx_labels.append(lbl)
+
+    # Autocomplete screen: 3 large boxes in a triangular layout
+    # Top-left, Top-right, Bottom-center — maximum separation
+    auto_boxes = []
+    auto_bg_plates = []
+    auto_labels = []
+    auto_positions_px = [(-500, 250), (500, 250), (0, -250)]
+    for i in range(3):
+        box = visual.Rect(win, width=350, height=350, pos=auto_positions_px[i],
+                          fillColor=[1, 1, 1], lineColor=[0, 0.72, 0.66],
+                          lineWidth=4, units='pix')
+        bg = visual.Rect(win, width=340, height=100, pos=auto_positions_px[i],
+                         fillColor=[-0.85, -0.85, -0.85], units='pix')
+        lbl = visual.TextStim(win, text="", pos=auto_positions_px[i],
+                              color=[1, 1, 1], height=55, bold=True,
+                              units='pix', wrapWidth=330)
+        auto_boxes.append(box)
+        auto_bg_plates.append(bg)
+        auto_labels.append(lbl)
 
     if args.inference:
         dec_inlet = None
@@ -319,7 +365,7 @@ def main():
             
         if not dec_inlet: core.quit()
 
-        outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
+        outlet.push_sample([f"SSVEP_START:{','.join(str(f) for f in ssvep_freqs_context)}"], pylsl.local_clock())
         outlet.push_sample([f"SET_THRESHOLD:{args.llm_threshold}"], pylsl.local_clock())
         
         while True:
@@ -330,16 +376,13 @@ def main():
 
             if current_state == "CONTEXT_SSVEP":
                 instruction.setText("SSVEP: Choose Context Mode")
-                labels = ["Enter Context", "No Context"]
-                for i, (txt, freq) in enumerate(zip(labels, ssvep_freqs_context)):
-                    x = -600 if i == 0 else 600 # Maximum spacing
-                    box = visual.Rect(win, width=350, height=350, pos=(x, 0), 
-                                      fillColor=[1, 1, 1], units='pix')
-                    lbl = visual.TextStim(win, text=txt, pos=(x, 0), 
-                                          color=[-1, -1, -1], height=70, bold=True, units='pix', wrapWidth=320)
+                # ── Exact SSVEP Protocol visual: white box ON/OFF per frame ──
+                # Each box flickers at its assigned frequency using the same
+                # sin(2π·f·t) > 0 gate that the standalone testbench uses.
+                for i, freq in enumerate(ssvep_freqs_context):
                     if math.sin(2 * math.pi * freq * t) > 0:
-                        box.draw()
-                        lbl.draw()
+                        ctx_boxes[i].draw()
+                        ctx_labels[i].draw()
                 instruction.draw()
                 win.flip()
                 marker, _ = dec_inlet.pull_sample(timeout=0.0)
@@ -373,14 +416,13 @@ def main():
                             elif marker[0].startswith("SSVEP_PREDICTIONS:"):
                                 autocomplete_words = marker[0].replace("SSVEP_PREDICTIONS:", "").split(",")
                                 current_state = "AUTOCOMPLETE_SSVEP"
-                                outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
+                                outlet.push_sample([f"SSVEP_START:{','.join(str(f) for f in ssvep_freqs_auto)}"], pylsl.local_clock())
                                 state_start_time = core.getTime()
                                 break
                             elif marker[0].startswith("LLM_RESPONSE:"):
                                 response_content = marker[0].replace("LLM_RESPONSE:", "")
                                 llm_response_text.setText(response_content)
                                 current_state = "LLM_RESPONSE_SCREEN"
-                                outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
                                 state_start_time = core.getTime()
                                 break
                     if current_state == "AUTOCOMPLETE_SSVEP" or current_state == "LLM_RESPONSE_SCREEN": break
@@ -412,13 +454,18 @@ def main():
                         if current_state == "CONTEXT_P300":
                             instruction.setText(f"Context: {current_context}")
                     else:
-                        if char_found == "8": 
-                            current_spelled = current_spelled[:-1]
-                        elif char_found == "_": 
+                        if char_found == "8":  # UNDO — pop last display snapshot
+                            if undo_stack_ui:
+                                current_spelled = undo_stack_ui.pop()
+                            # else: nothing to undo, leave display unchanged
+                        elif char_found == "_":
+                            undo_stack_ui.append(current_spelled)
                             current_spelled += " "
-                        elif char_found == "9": 
+                        elif char_found == "9":
+                            undo_stack_ui.append(current_spelled)
                             current_spelled = "" # Visually wipe the spelling line on submit
-                        else: 
+                        else:
+                            undo_stack_ui.append(current_spelled)
                             current_spelled += char_found
                         typed_text.setText(current_spelled)
                 for row in grid_stims:
@@ -429,73 +476,59 @@ def main():
                     for stim in row: stim.color = DIM_COLOR
 
             elif current_state == "AUTOCOMPLETE_SSVEP":
-                # 4-point distributed layout mapped to the extreme corners using normalized units
-                positions = [(-0.85, 0.75), (0.85, 0.75), (-0.85, -0.75), (0.85, -0.75)]
-                for i, (word, freq) in enumerate(zip(autocomplete_words, ssvep_freqs_auto)):
-                    pos = positions[i]
-                    # Dotted/Checkerboard pattern to reduce glare (sf controls the number of dots)
-                    box = visual.GratingStim(win, tex='sqrXsqr', size=(0.35, 0.35), pos=pos, 
-                                             sf=15.0, color=[1, 1, 1], contrast=0.6, units='norm')
-                    # High contrast dark plate behind the text
-                    bg = visual.Rect(win, width=0.35, height=0.15, pos=pos, fillColor=[-0.9, -0.9, -0.9], units='norm')
-                    lbl = visual.TextStim(win, text=word, pos=pos, 
-                                          color=[1, 1, 1], height=0.12, bold=True, units='norm', wrapWidth=0.35)
+                # ── Exact SSVEP Protocol visual: 3 large white boxes ──
+                # Triangular layout (top-left, top-right, bottom-center)
+                # with same high-contrast white/black scheme as the testbench.
+                n_words = min(len(autocomplete_words), 3)
+                for i in range(n_words):
+                    auto_labels[i].setText(autocomplete_words[i])
+                    freq = ssvep_freqs_auto[i]
                     if math.sin(2 * math.pi * freq * t) > 0:
-                        box.draw()
-                        bg.draw()
-                        lbl.draw()
+                        auto_boxes[i].draw()
+                        auto_bg_plates[i].draw()
+                        auto_labels[i].draw()
+                instruction.setText("SSVEP: Select Word")
+                instruction.draw()
+                typed_text.draw()
                 win.flip()
                 if core.getTime() - state_start_time > args.ssvep_timeout:
                     current_state = "MAIN_SPELLER"
                     outlet.push_sample(["SSVEP_TIMEOUT"], pylsl.local_clock())
+                    outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
                     state_start_time = core.getTime()
                 marker, _ = dec_inlet.pull_sample(timeout=0.0)
                 if marker and marker[0].startswith("SSVEP_DECODED_"):
                     f = float(marker[0].replace("SSVEP_DECODED_", ""))
                     try:
                         idx = ssvep_freqs_auto.index(f)
-                        selected_word = autocomplete_words[idx]
-                        parts = current_spelled.strip().split()
-                        if parts: parts[-1] = selected_word
-                        else: parts = [selected_word]
-                        current_spelled = " ".join(parts) + " "
-                        typed_text.setText(current_spelled)
-                        current_state = "MAIN_SPELLER"
-                        outlet.push_sample([f"WORD_SELECTED:{selected_word}"], pylsl.local_clock())
-                        state_start_time = core.getTime()
+                        if idx < n_words:
+                            selected_word = autocomplete_words[idx]
+                            # Push undo snapshot BEFORE modifying display
+                            undo_stack_ui.append(current_spelled)
+                            parts = current_spelled.strip().split()
+                            if parts: parts[-1] = selected_word
+                            else: parts = [selected_word]
+                            current_spelled = " ".join(parts) + " "
+                            typed_text.setText(current_spelled)
+                            current_state = "MAIN_SPELLER"
+                            outlet.push_sample([f"WORD_SELECTED:{selected_word}"], pylsl.local_clock())
+                            outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
+                            state_start_time = core.getTime()
                     except ValueError: pass
 
             elif current_state == "LLM_RESPONSE_SCREEN":
                 llm_response_text.draw()
-                
-                elapsed_time = core.getTime() - state_start_time
-                
-                if elapsed_time > 5.0:
-                    # High-visibility contrast scheme for the Continue button
-                    box = visual.GratingStim(win, tex='sqrXsqr', size=(0.4, 0.35), pos=pos, 
-                                             sf=15.0, color=[1, 1, 1], contrast=0.7, units='norm')
-                    # Bright Yellow Plate for maximum ocular contrast
-                    bg = visual.Rect(win, width=0.45, height=0.2, pos=pos, fillColor=[1, 1, -1], units='norm')
-                    lbl = visual.TextStim(win, text="CONTINUE", pos=pos, 
-                                          color=[-1, -1, -1], height=0.12, bold=True, units='norm')
-                    
-                    if math.sin(2 * math.pi * 15.0 * t) > 0:
-                        box.draw()
-                        bg.draw()
-                        lbl.draw()
-                
+                instruction.setText(f"Reading... ({int(args.ssvep_timeout - (core.getTime() - state_start_time))}s)")
+                instruction.draw()
                 win.flip()
                 
-                marker, _ = dec_inlet.pull_sample(timeout=0.0)
-                if marker and marker[0].startswith("SSVEP_DECODED_"):
-                    if elapsed_time > 5.0:
-                        f = float(marker[0].replace("SSVEP_DECODED_", ""))
-                        if f == 15.0:
-                            current_spelled = ""
-                            typed_text.setText("")
-                            current_state = "MAIN_SPELLER"
-                            outlet.push_sample(["RESPONSE_ACK"], pylsl.local_clock())
-                            state_start_time = core.getTime()
+                # Auto-continue after timeout — no SSVEP button needed
+                if core.getTime() - state_start_time > args.ssvep_timeout:
+                    current_spelled = ""
+                    typed_text.setText("")
+                    current_state = "MAIN_SPELLER"
+                    outlet.push_sample(["RESPONSE_ACK"], pylsl.local_clock())
+                    state_start_time = core.getTime()
     else:
         for char in args.word:
             pos = get_char_pos(char)

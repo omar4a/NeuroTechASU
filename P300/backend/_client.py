@@ -116,4 +116,19 @@ def get_response(
         raise ValueError("Received empty response from model")
 
     except Exception as e:
+        err_str = str(e)
+        # Some models (e.g. Gemma) don't support system/developer instructions.
+        # Retry with the system prompt merged into the user message.
+        if "Developer instruction is not enabled" in err_str or "system" in err_str.lower() and "not supported" in err_str.lower():
+            try:
+                merged_message = f"Instructions: {system_prompt}\n\n{user_message}"
+                fallback_messages = [{"role": "user", "content": merged_message}]
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=fallback_messages,
+                )
+                if response.choices and response.choices[0].message.content:
+                    return response.choices[0].message.content
+            except Exception as fallback_e:
+                raise RuntimeError(f"LLM API request failed (fallback also failed): {fallback_e}") from fallback_e
         raise RuntimeError(f"LLM API request failed: {e}") from e

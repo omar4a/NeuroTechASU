@@ -114,17 +114,26 @@ class RealTimeInference:
         
         # [NEW] Project 2: BCI States & Buffers
         self.bci_mode = "P300" # Toggles between P300 and SSVEP
-        self.ssvep_targets = [8.0, 10.0, 12.0, 15.0, 17.0] # 5 optimized options. Unused frequencies act as 'Otherwise' noise catchers.
+        # ── EXACT MATCH to SSVEP Protocol/ssvep_realtime.py ──
+        # Using the proven 3-frequency set and identical classification
+        # parameters that the standalone SSVEP testbench validated.
+        self.ssvep_targets = [10.0, 12.0, 15.0]  # Same as SSVEP Protocol
         self.ssvep_classifier = SSVEPClassifier(targets=self.ssvep_targets)
         self.ssvep_buffer = deque(maxlen=int(FS * 1.0)) # 1.0-second discrete window
-        self.ssvep_window_size = 6
-        self.ssvep_history = deque(maxlen=self.ssvep_window_size) # Dynamic voting window
+        self.ssvep_window_size = 4  # Same as SSVEP Protocol: deque(maxlen=4)
+        self.ssvep_history = deque(maxlen=self.ssvep_window_size)
         self.roi_indices = [5, 6, 7] # PO7, Oz, PO8 indices for SSVEP
         
         self.context_word = ""
         self.sentence_history = ""
         self.current_word = ""
         self.llm_threshold = 0.9
+        
+        # Undo stack: each entry is a snapshot of (current_word, sentence_history)
+        # taken BEFORE each action. Pressing "8" pops and restores the last snapshot.
+        # This enables multi-level undo: e.g. undo a word selection → back to prefix,
+        # then undo the last letter → back to shorter prefix.
+        self.undo_stack = []
         
         # LSL Outlet: How we talk back to the PsychoPy UI.
         # We don't create this until the model is trained.
@@ -134,7 +143,7 @@ class RealTimeInference:
         self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spelled_text.txt")
         
         # [NEW] Project 2: LLM API Integration
-        self.speller_api = API()
+        self.speller_api = API(prediction_count=3)  # 3 predictions to match 3 SSVEP frequencies
         
     def load_and_train_model(self):
         """
@@ -231,19 +240,26 @@ class RealTimeInference:
                             X = np.array(self.ssvep_buffer).T # (Channels, Samples)
                             self.ssvep_buffer.clear()
                             
-                            # EXACT MATCH to ssvep_realtime.py: Standard CCA, no threshold
-                            pred, _ = self.ssvep_classifier.classify_cca(X)
+                            # CCA classification using the scoped classifier
+                            # (2-target for context screen, 3-target for autocomplete)
+                            classifier = getattr(self, 'ssvep_active_classifier', self.ssvep_classifier)
+                            pred, corrs = classifier.classify_cca(X)
+                            
+                            # ── EXACT MATCH to ssvep_realtime.py ──
+                            # The proven SSVEP Protocol uses NO confidence threshold.
+                            # The 3/4 majority voter alone is sufficient to reject noise.
                             self.ssvep_history.append(pred)
                             
-                            # Majority voter
+                            max_corr = np.max(corrs)
+                            print(f"  [SSVEP] {pred} Hz (ρ={max_corr:.3f})")
+                            
+                            # Majority voter: require 3 out of 4 agreement
                             if len(self.ssvep_history) == self.ssvep_history.maxlen:
                                 from collections import Counter
                                 counts = Counter(self.ssvep_history)
                                 most_common, count = counts.most_common(1)[0]
                                 
-                                # Require 4 out of 6 majority
-                                required_votes = 4
-                                if count >= required_votes:
+                                if count > 2:
                                     print(f"*** SSVEP DETECTED: {most_common} Hz ***")
                                     self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common}"], pylsl.local_clock())
                                     self.ssvep_history.clear()
@@ -284,11 +300,30 @@ class RealTimeInference:
                     print(f"Global Context Updated: {self.context_word} (Speller Reset)")
                 
                 elif m_str.startswith("SSVEP_START"):
-                    print(f"Backend switching to SSVEP mode... ({m_str})")
+                    # Parse active frequencies: "SSVEP_START:10.0,15.0" or bare "SSVEP_START"
+                    active_freqs = self.ssvep_targets  # default: all 3
+                    if ":" in m_str:
+                        freq_str = m_str.split(":", 1)[1]
+                        try:
+                            active_freqs = [float(f) for f in freq_str.split(",")]
+                        except ValueError:
+                            pass
+                    
+                    print(f"Backend switching to SSVEP mode (targets: {active_freqs})")
                     self.bci_mode = "SSVEP"
-                    self.ssvep_window_size = 6
+                    # Create a classifier scoped to ONLY the active frequencies.
+                    # This eliminates ghost correlations from unused targets
+                    # (e.g. 12 Hz competing with 10 Hz on the 2-target context screen).
+                    self.ssvep_active_classifier = SSVEPClassifier(targets=active_freqs)
+                    self.ssvep_window_size = 4
                     self.ssvep_buffer.clear()
                     self.ssvep_history = deque(maxlen=self.ssvep_window_size)
+                
+                elif m_str == "SSVEP_STOP":
+                    print("Backend reverting to P300 mode (SSVEP_STOP)...")
+                    self.bci_mode = "P300"
+                    self.ssvep_buffer.clear()
+                    self.ssvep_history.clear()
                 
                 elif m_str == "SSVEP_TIMEOUT":
                     print("Backend reverting to P300 mode (SSVEP Timeout)...")
@@ -299,6 +334,8 @@ class RealTimeInference:
                 elif m_str.startswith("WORD_SELECTED:"):
                     selected_word = m_str.replace("WORD_SELECTED:", "").strip()
                     print(f"Backend reverting to P300 mode (Selected: {selected_word})")
+                    # Push undo snapshot BEFORE modifying state
+                    self.undo_stack.append({"cw": self.current_word, "sh": self.sentence_history})
                     # Update sentence history for future LLM predictions
                     self.sentence_history += (" " if self.sentence_history else "") + selected_word
                     # RESET the prefix buffer because a word was completed
@@ -372,26 +409,39 @@ class RealTimeInference:
             await asyncio.sleep(0.01)
 
     def _handle_character_decoded(self, char):
-        """Internal logic to manage words/sentences and trigger LLM."""
-        if char == "8": # Backspace moved to 8
-            if self.current_word:
-                self.current_word = self.current_word[:-1]
-            elif self.sentence_history:
-                parts = self.sentence_history.strip().split()
-                if parts:
-                    self.current_word = parts[-1]
-                    self.sentence_history = " ".join(parts[:-1])
-            print(f"  [BACKSPACE] Word: '{self.current_word}' | History: '{self.sentence_history}'")
+        """Internal logic to manage words/sentences and trigger LLM.
+        
+        "8" is a full UNDO button. Every other action pushes a snapshot of
+        (current_word, sentence_history) onto the undo stack before modifying
+        state. Pressing "8" pops the last snapshot and restores it.
+        
+        This enables multi-level undo:
+          1. Spell "H" → "E" (wrong)  →  word suggestions appear
+          2. Select wrong word "HEAVY" via SSVEP
+          3. Press "8" → undo word → back to prefix "HE"
+          4. Press "8" → undo "E" → back to "H"
+        """
+        if char == "8": # UNDO — pop last snapshot and restore
+            if self.undo_stack:
+                prev = self.undo_stack.pop()
+                self.current_word = prev["cw"]
+                self.sentence_history = prev["sh"]
+                print(f"  [UNDO] Restored → Word: '{self.current_word}' | History: '{self.sentence_history}'")
+            else:
+                print(f"  [UNDO] Nothing to undo (stack empty)")
         elif char == "9": # Submit to AI
+            self.undo_stack.append({"cw": self.current_word, "sh": self.sentence_history})
             self.sentence_history += (" " if self.sentence_history else "") + self.current_word
             self.current_word = ""
             print(f"  [SUBMIT] Sending to LLM: '{self.sentence_history}'")
             asyncio.create_task(self.generate_response(self.sentence_history))
         elif char == "_": # Space / Add word directly
+            self.undo_stack.append({"cw": self.current_word, "sh": self.sentence_history})
             self.sentence_history += (" " if self.sentence_history else "") + self.current_word
             self.current_word = ""
             print(f"  [SPACE] Added word to sentence. Sentence now: '{self.sentence_history}'")
         else:
+            self.undo_stack.append({"cw": self.current_word, "sh": self.sentence_history})
             self.current_word += char
             # Trigger LLM async prediction for the current word fragment
             asyncio.create_task(self.predict_words(self.current_word))
@@ -602,12 +652,12 @@ class RealTimeInference:
             words = [r["word"] for r in results]
             probs = [r["prob"] for r in results]
             
-            if len(words) < 4: 
-                words += [""] * (4 - len(words))
-                probs += [0.0] * (4 - len(probs))
+            if len(words) < 3: 
+                words += [""] * (3 - len(words))
+                probs += [0.0] * (3 - len(probs))
             
-            words = words[:4]
-            probs = probs[:4]
+            words = words[:3]
+            probs = probs[:3]
             
             # Uncertainty Ratio calculation
             p_top1 = probs[0]

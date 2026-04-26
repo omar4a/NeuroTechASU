@@ -63,6 +63,15 @@ _PROMPT_SENTENCE_START = (
 )
 
 
+# Agent 4: sentence is empty, context is empty, user has typed a prefix
+_PROMPT_PREFIX_ONLY = (
+    "You are a word completion assistant for a BCI speller.\n"
+    "Given a prefix, return the {n} most likely English words that start exactly with that prefix.\n\n"
+    "Return ONLY valid JSON: {{\"predictions\": [{{\"word\": \"word1\", \"prob\": 0.8}}, ...]}}\n"
+    "No explanation. No markdown. No extra keys. Only single words, no phrases."
+)
+
+
 # ---------------------------------------------------------------------------
 # Cold start defaults — no model call needed when both inputs are empty.
 # Order: article, question word, pronoun — covers the three most common
@@ -130,7 +139,8 @@ class API:
 
         Routing table (all edge cases handled here, not in the model):
           prefix=''  sentence=''  ->  cold_start()        [no model call]
-          prefix=X   sentence=''  ->  sentence_start_agent
+          prefix=X   sentence=''  context='' -> prefix_only_agent
+          prefix=X   sentence=''  context=Y  -> sentence_start_agent
           prefix=''  sentence=X   ->  next_word_agent
           prefix=X   sentence=X   ->  prefix_completion_agent
 
@@ -153,17 +163,23 @@ class API:
         # Normalise inputs
         prefix   = prefix.strip()   if isinstance(prefix, str)   else ""
         sentence = sentence.strip() if isinstance(sentence, str) else ""
-        context  = context.strip()  or "(no context)"
+        
+        raw_context = context.strip() if isinstance(context, str) else ""
+        context     = raw_context or "(no context)"
 
         has_prefix   = bool(prefix)
         has_sentence = bool(sentence)
+        has_context  = bool(raw_context)
 
         # --- Route ---
         if not has_prefix and not has_sentence:
             return self._cold_start()
 
         if has_prefix and not has_sentence:
-            raw = self._call_sentence_start_agent(prefix, context)
+            if not has_context:
+                raw = self._call_prefix_only_agent(prefix)
+            else:
+                raw = self._call_sentence_start_agent(prefix, context)
         elif not has_prefix and has_sentence:
             raw = self._call_next_word_agent(sentence, context)
         else:
@@ -308,6 +324,11 @@ class API:
     def _call_sentence_start_agent(self, prefix: str, context: str) -> str | None:
         system = _PROMPT_SENTENCE_START.format(n=self._N_PREDICTIONS)
         user   = f"context: {context}\nprefix: {prefix}"
+        return self._safe_call(self.speller_client, system, user)
+
+    def _call_prefix_only_agent(self, prefix: str) -> str | None:
+        system = _PROMPT_PREFIX_ONLY.format(n=self._N_PREDICTIONS)
+        user   = f"prefix: {prefix}"
         return self._safe_call(self.speller_client, system, user)
 
     def _cold_start(self) -> list[dict]:
