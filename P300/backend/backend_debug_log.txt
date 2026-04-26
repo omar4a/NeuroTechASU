@@ -1,5 +1,5 @@
 
---- BACKEND DEBUG LOG STARTED: 56915.8709831 ---
+--- BACKEND DEBUG LOG STARTED: 59561.8457422 ---
 Resolving LSL Streams...
 Training models in background...
 Synchronizing LSL clocks... (3 seconds)
@@ -10,8 +10,90 @@ Loading Pre-fitted ASR State...
 Model, KDEs, and ASR State Loaded Successfully.
 
 [READY] Engine active and models trained. Decoding dynamic markers...
-Backend switching to SSVEP mode (targets: [10.0, 15.0])
+Backend switching to SSVEP mode (targets: [10.0, 15.0], gate=OFF)
 LLM Trigger Threshold Updated: 0.5
 [READY] Clock sync complete. Pulling data.
+  [SSVEP] 15.0 Hz (r=0.614)
+  [SSVEP] 15.0 Hz (r=0.640)
+  [SSVEP] 15.0 Hz (r=0.484)
+  [SSVEP] 15.0 Hz (r=0.578)
+*** SSVEP DETECTED: 15.0 Hz ***
+Backend reverting to P300 mode (SSVEP_STOP)...
+New letter trial starting...
+  [EVAL] A: P=0.243 | UQ Ratio=1.5
+  [EVAL] I: P=0.781 | UQ Ratio=5.0
+  [EVAL] I: P=0.513 | UQ Ratio=1.8
+  [EVAL] H: P=0.553 | UQ Ratio=2.5
+  [EVAL] H: P=0.953 | UQ Ratio=26.7
+  [EVAL] H: P=0.959 | UQ Ratio=71.8
+  [EVAL] H: P=0.998 | UQ Ratio=557.5
+*** DYNAMIC STOP *** FOUND: H
+New letter trial starting...
+  [EVAL] G: P=0.373 | UQ Ratio=1.0
+  [EVAL] G: P=0.789 | UQ Ratio=4.5
+  [EVAL] E: P=0.664 | UQ Ratio=2.1
+  [EVAL] E: P=0.954 | UQ Ratio=42.4
+  [EVAL] E: P=0.983 | UQ Ratio=113.0
+*** DYNAMIC STOP *** FOUND: E
+Fetching predictions for: 'HE' (Context: )
+  [SPELLER_LLM] Inference time: 2583.1ms
+  Predictions: ['Hello', 'Help', 'Heir'] | Probabilities: [0.92, 0.78, 0.65]
+  Uncertainty Ratio (Top 1 / Top 2): 1.2 (Required: 1.0)
+  [LLM] High confidence (Ratio >= 1.0). Triggering SSVEP UI...
+New letter trial starting...
+Backend switching to SSVEP mode (targets: [10.0, 12.0, 15.0], gate=ON)
+  [SSVEP] 15.0 Hz (r=0.398)
+  [SSVEP] 10.0 Hz (r=0.381)
+  [SSVEP] 10.0 Hz (r=0.450)
+  [SSVEP] 10.0 Hz (r=0.508)
+*** SSVEP DETECTED: 10.0 Hz ***
+Backend reverting to P300 mode (Selected: Hello)
+Backend reverting to P300 mode (SSVEP_STOP)...
+New letter trial starting...
+  [EVAL] 9: P=0.300 | UQ Ratio=2.1
+  [EVAL] 9: P=0.690 | UQ Ratio=3.2
+  [EVAL] 9: P=0.982 | UQ Ratio=62.0
+  [EVAL] 9: P=0.995 | UQ Ratio=248.0
+*** DYNAMIC STOP *** FOUND: 9
+  [SUBMIT] Sending to LLM: 'Hello '
+  [METRICS] Beta/Alpha Ratio: 0.94
+Generating full response for: 'Hello ' (Context: ) | State: Focused
+  [RESPONSE_LLM] Inference time: 3062.7ms
+  [RESPONSE_LLM] Output: Hello there! It’s really nice to connect with you. I’m glad you reached out. I understand you’re a very focused person, and I want to make sure I’m here to support you in whatever you’re working on.   It’s interesting to hear you’re using a BCI (Brain-Computer Interface) speller – that’s a truly remarkable and innovative way to communicate. It takes a huge amount of concentration and dedication, and I really admire your commitment to finding a method that works so well for you.   To help me understand how I can best assist you today, could you tell me a little bit about what’s on your mind? Are you currently grappling with a specific project, a particular challenge, or just looking for a space to brainstorm?   Don’t feel pressured to share anything you’re not comfortable with, of course. But even a general idea of what you’re focused on will help me tailor my responses to be as relevant and useful as possible.   I’m here to listen, offer suggestions, provide information, or just be a quiet presence if that’s what you need.  Let’s figure out how I can be a helpful part of your focused process. 😊
+New letter trial starting...
+Backend reverting to P300 mode (Response Acknowledged)
+New letter trial starting...
+  [EVAL] A: P=0.513 | UQ Ratio=2.0
+  [EVAL] M: P=0.943 | UQ Ratio=26.9
+  [EVAL] M: P=0.589 | UQ Ratio=3.0
+  [EVAL] M: P=0.636 | UQ Ratio=3.0
+  [EVAL] M: P=0.521 | UQ Ratio=2.1
+  [EVAL] K: P=0.332 | UQ Ratio=1.3
+  [EVAL] U: P=0.593 | UQ Ratio=3.3
+  [EVAL] K: P=0.357 | UQ Ratio=1.5
+  [EVAL] U: P=0.674 | UQ Ratio=5.0
+  [EVAL] M: P=0.340 | UQ Ratio=1.1
+TRIAL_END received. Waiting for last brainwaves to arrive...
+---------> FINAL GUESS: M <---------
+New letter trial starting...
+  [EVAL] 6: P=0.267 | UQ Ratio=5.3
+  [EVAL] T: P=0.267 | UQ Ratio=5.3
+  [EVAL] 1: P=0.061 | UQ Ratio=1.0
+  [EVAL] O: P=0.267 | UQ Ratio=5.3
+  [EVAL] 8: P=0.267 | UQ Ratio=5.3
+  [EVAL] B: P=0.061 | UQ Ratio=1.0
+  [EVAL] B: P=0.061 | UQ Ratio=1.0
+  [EVAL] B: P=0.164 | UQ Ratio=1.1
+  [EVAL] R: P=0.129 | UQ Ratio=1.1
+  [EVAL] E: P=0.234 | UQ Ratio=1.2
+TRIAL_END received. Waiting for last brainwaves to arrive...
+---------> FINAL GUESS: 7 <---------
+Fetching predictions for: 'M7' (Context: )
 
-CRITICAL ENGINE FAILURE: 'charmap' codec can't encode character '\u03c1' in position 19: character maps to <undefined>
+Saving inference recording for post-hoc diagnosis...
+Inference recording saved to 'inference_recording/' directory.
+
+Fixer agent also failed for prefix 'M7'
+  [SPELLER_LLM] Inference time: 7160.7ms
+  Predictions: ['M7', '', ''] | Probabilities: [0.0, 0.0, 0.0]
+  Uncertainty Ratio (Top 1 / Top 2): 0.0 (Required: 1.0)

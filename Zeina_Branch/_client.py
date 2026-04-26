@@ -11,6 +11,7 @@ TCP/TLS connection pool. See LATENCY.md §"Persistent client + connection pool".
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 
 from dotenv import load_dotenv
@@ -111,7 +112,11 @@ def get_response(
         
         # Extract final text response
         if response.choices and response.choices[0].message.content:
-            return response.choices[0].message.content
+            text = response.choices[0].message.content
+            # Strip <think>...</think> reasoning blocks emitted by some models
+            # (DeepSeek, QwQ, etc.) before the actual answer.
+            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            return text
         raise ValueError("Received empty response from model")
         
     except Exception as e:

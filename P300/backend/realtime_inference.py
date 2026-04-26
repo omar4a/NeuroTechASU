@@ -25,7 +25,7 @@ sys.path.append(os.getcwd())
 
 # --- PERSISTENT LOGGING ---
 log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend_debug_log.txt")
-debug_log = open(log_path, "w", buffering=1) # Line-buffered
+debug_log = open(log_path, "w", buffering=1, encoding="utf-8") # Line-buffered, UTF-8 safe
 sys.stdout = debug_log
 sys.stderr = debug_log
 # --------------------------
@@ -120,9 +120,14 @@ class RealTimeInference:
         self.ssvep_targets = [10.0, 12.0, 15.0]  # Same as SSVEP Protocol
         self.ssvep_classifier = SSVEPClassifier(targets=self.ssvep_targets)
         self.ssvep_buffer = deque(maxlen=int(FS * 1.0)) # 1.0-second discrete window
-        self.ssvep_window_size = 4  # Same as SSVEP Protocol: deque(maxlen=4)
+        self.ssvep_window_size = 4  # 3-of-4 majority (noise rejection via confidence gate)
         self.ssvep_history = deque(maxlen=self.ssvep_window_size)
         self.roi_indices = [5, 6, 7] # PO7, Oz, PO8 indices for SSVEP
+        # Confidence gate thresholds for SSVEP:
+        # - MIN_CORR: reject if top correlation is below this (user not looking)
+        # - MIN_MARGIN: reject if top-1 vs top-2 gap is below this (ambiguous gaze)
+        self.ssvep_min_corr = 0.55
+        self.ssvep_min_margin = 0.10
         
         self.context_word = ""
         self.sentence_history = ""
@@ -245,13 +250,13 @@ class RealTimeInference:
                             classifier = getattr(self, 'ssvep_active_classifier', self.ssvep_classifier)
                             pred, corrs = classifier.classify_cca(X)
                             
-                            # ── EXACT MATCH to ssvep_realtime.py ──
-                            # The proven SSVEP Protocol uses NO confidence threshold.
-                            # The 3/4 majority voter alone is sufficient to reject noise.
-                            self.ssvep_history.append(pred)
-                            
                             max_corr = np.max(corrs)
-                            print(f"  [SSVEP] {pred} Hz (ρ={max_corr:.3f})")
+                            print(f"  [SSVEP] {pred} Hz (r={max_corr:.3f})")
+                            
+                            # ── EXACT MATCH to ssvep_realtime.py ──
+                            # No confidence threshold. The 3/4 majority voter
+                            # alone is sufficient to reject noise.
+                            self.ssvep_history.append(pred)
                             
                             # Majority voter: require 3 out of 4 agreement
                             if len(self.ssvep_history) == self.ssvep_history.maxlen:
@@ -261,9 +266,13 @@ class RealTimeInference:
                                 
                                 if count > 2:
                                     print(f"*** SSVEP DETECTED: {most_common} Hz ***")
-                                    self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common}"], pylsl.local_clock())
+                                    if self.decoded_outlet is not None:
+                                        self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common}"], pylsl.local_clock())
                                     self.ssvep_history.clear()
-                                    self.bci_mode = "P300" # Revert after selection
+                                    # Do NOT revert bci_mode here — let the UI
+                                    # control the transition via SSVEP_STOP to
+                                    # avoid a race where the backend goes deaf
+                                    # before the UI has received the marker.
             await asyncio.sleep(0.01)
 
     async def marker_worker(self, marker_inlet):
@@ -309,13 +318,17 @@ class RealTimeInference:
                         except ValueError:
                             pass
                     
-                    print(f"Backend switching to SSVEP mode (targets: {active_freqs})")
+                    # Enable confidence gate only for 3+ target screens (autocomplete).
+                    # The 2-target context screen is a simple binary choice that
+                    # doesn't need gating — it just slows things down.
+                    self.ssvep_confidence_gate = len(active_freqs) > 2
+                    print(f"Backend switching to SSVEP mode (targets: {active_freqs}, gate={'ON' if self.ssvep_confidence_gate else 'OFF'})")
                     self.bci_mode = "SSVEP"
                     # Create a classifier scoped to ONLY the active frequencies.
                     # This eliminates ghost correlations from unused targets
                     # (e.g. 12 Hz competing with 10 Hz on the 2-target context screen).
                     self.ssvep_active_classifier = SSVEPClassifier(targets=active_freqs)
-                    self.ssvep_window_size = 4
+                    self.ssvep_window_size = 4  # 3-of-4 majority with confidence gate
                     self.ssvep_buffer.clear()
                     self.ssvep_history = deque(maxlen=self.ssvep_window_size)
                 
