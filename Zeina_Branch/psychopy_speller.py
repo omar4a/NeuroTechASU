@@ -2,7 +2,7 @@ import argparse
 import random
 import types
 import numpy as np
-import math
+import re
 
 # Apply NumPy 2.0 backward compatibility monkey-patch for PsychoPy 2023
 if not hasattr(np, 'alltrue'): np.alltrue = np.all
@@ -14,6 +14,11 @@ if not hasattr(np, 'object'): np.object = object
 
 from psychopy import visual, core, event
 import pylsl
+
+import sys, os
+# speller_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "speller")
+sys.path.insert(0, "c:\\Users\\pc\\Downloads\\NeuroTechASU-Sandbox\\")
+from speller import predict_words, respond_to_sentence
 
 matrixChars = [
     ['A', 'B', 'C', 'D', 'E', 'F'],
@@ -108,41 +113,160 @@ def generate_flash_sequence(mode, target_char=None):
                     break
     return seq
 
+def handle_prediction_screen(win, current_word, current_sentence, fps, outlet, dec_inlet):
+    # 1. Fetch predictions safely
+    try:
+        predictions = predict_words(prefix=current_word, context="", sentence="")
+    except Exception:
+        predictions = []
+
+    # 2. STRICT SANITIZATION: Only allow clean, short, printable words
+    VALID_WORD_RE = re.compile(r'^[A-Za-z0-9\-\']{1,18}$')
+    clean_preds = []
+    for w in predictions:
+        w_str = str(w).strip()
+        if VALID_WORD_RE.match(w_str) and w_str.lower() != current_word.lower().strip():
+            clean_preds.append(w_str)
+            
+    # 3. GATE: Skip SSVEP entirely if < 2 meaningful suggestions
+    if len(clean_preds) < 2:
+        return current_word, current_sentence  # P300 continues uninterrupted
+
+    # 4. Prepare exactly 4 UI slots (pad with safe placeholder)
+    options = clean_preds[:4]
+    while len(options) < 4:
+        options.append("...")
+        
+    options.append("<-")  # Backspace option
+
+    # SSVEP Frequencies mapped to 60Hz frame intervals
+    frame_intervals = [6, 5, 4, 7, 8]
+    targets = [10.0, 12.0, 15.0, 8.57, 7.5]
+    
+    # Setup UI elements
+    stims = []
+    x_pos = [-0.6, -0.3, 0.0, 0.3, 0.6]
+    for i, text in enumerate(options):
+        stim = visual.TextStim(win, text=text, pos=(x_pos[i], 0), color='#FFFFFF', height=0.1)
+        stims.append(stim)
+        
+    timer_text = visual.TextStim(win, text=" ", pos=(0, -0.5), color='#FF0000', height=0.08)
+
+    # Static delay before SSVEP flashes start
+    timer_text.setText("Find your target... ")
+    for _ in range(int(1.5 * fps)):
+        for stim in stims:
+            stim.draw()
+        timer_text.draw()
+        win.flip()
+        
+    if outlet:
+        import pylsl
+        outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
+
+    # 10s timeout loop
+    timeout_frames = int(10.0 * fps)
+    selected = None
+
+    for frame in range(timeout_frames):
+        time_left = 10 - (frame / fps)
+        timer_text.setText(f"{time_left:.1f}s ")
+        
+        for i, stim in enumerate(stims):
+            if (frame // (frame_intervals[i] // 2)) % 2 == 0:
+                stim.color = '#FFFFFF'
+            else:
+                 stim.color = '#262626'
+            stim.draw()
+            
+        timer_text.draw()
+        win.flip()
+        
+        # Check backend for SSVEP Decoded Marker
+        if dec_inlet:
+            marker, _ = dec_inlet.pull_sample(timeout=0.0)
+            if marker and marker[0].startswith("SSVEP_DECODED_"):
+                try:
+                    freq = float(marker[0].replace("SSVEP_DECODED_", ""))
+                    if freq in targets:
+                        idx = targets.index(freq)
+                        selected = options[idx]
+                        break
+                except ValueError:
+                    pass
+        
+        # Mock SSVEP Selection using keys 1-5 for testing
+        keys = event.getKeys(keyList=['1', '2', '3', '4', '5', 'escape'])
+        if 'escape' in keys:
+            if outlet:
+                import pylsl
+                outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
+            core.quit()
+        if keys:
+            idx = int(keys[0]) - 1
+            selected = options[idx]
+            break
+            
+    if outlet:
+        import pylsl
+        outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
+        
+    # Process selection
+    if selected == "<-":
+        current_word = current_word[:-1]
+    elif selected and selected != "...":
+        current_sentence += selected + " "
+        current_word = " "
+    elif selected == "...":
+        current_sentence += current_word + " "
+        current_word = " "
+        
+    return current_word, current_sentence
+
+def display_response_screen(win, sentence, fps):
+    response = respond_to_sentence(sentence, "")
+    
+    resp_text = visual.TextStim(win, text=response, pos=(0, 0), color='#FFFFFF', height=0.08, wrapWidth=1.5)
+    inst_text = visual.TextStim(win, text="(Press ESC to exit)", pos=(0, -0.8), color='#555555', height=0.05)
+    
+    while True:
+        resp_text.draw()
+        inst_text.draw()
+        win.flip()
+        if event.getKeys(keyList=['escape']):
+            break
+
 
 def main():
     from psychopy import gui
     
-    # Updated Project 2 Config Dialog
+    # Define default settings strictly as strings to prevent PsychoPy's auto-caster from crashing when you backspace box contents!
     exp_info = {
-        '01. System Mode': ['Project 2: LLM Speller', 'Standalone Training'],
-        '02. Keyboard Mode': ['2: Checkerboard (CBP)', '1: Row-Column (RCP)'],
-        '03. LLM Trigger Conf (0-1)': '0.8',
-        '04. SSVEP Timeout (s)': '10',
-        '05. Target Word (Training Only)': 'NEUROTECH',
-        '06. Inference Trials': '5',
-        '07. Blocks (Flashes)': '10',
-        '08. Monitor FPS': '60'
+        'Mode (1:RCP, 2:CBP)': '1',
+        'Target Word': 'NEUROTECH_BRAIN',
+        'Inference Mode': False,
+        'Inference Trials': '5',
+        'Blocks (Flashes)': '12',
+        'Monitor FPS': '60'
     }
     
-    dlg = gui.DlgFromDict(dictionary=exp_info, sortKeys=False, title="NeuroTech ASU - Project 2 Config")
+    # Present a clean graphical dialog window natively within PsychoPy
+    dlg = gui.DlgFromDict(dictionary=exp_info, sortKeys=False, title="P300 Speller Config")
     if not dlg.OK:
-        core.quit()
+        core.quit() # User pressed cancel
         
     args = types.SimpleNamespace()
     
     try:
-        # Map human-readable names to internal logic
-        args.inference = (exp_info['01. System Mode'] == 'Project 2: LLM Speller')
-        args.mode = 2 if 'Checkerboard' in exp_info['02. Keyboard Mode'] else 1
-        args.llm_threshold = float(exp_info['03. LLM Trigger Conf (0-1)'])
-        args.ssvep_timeout = float(exp_info['04. SSVEP Timeout (s)'])
-        args.word = exp_info['05. Target Word (Training Only)']
-        args.trials = int(exp_info['06. Inference Trials'])
-        args.blocks = int(exp_info['07. Blocks (Flashes)'])
-        args.fps = int(exp_info['08. Monitor FPS'])
+        args.mode = int(exp_info['Mode (1:RCP, 2:CBP)']) if exp_info['Mode (1:RCP, 2:CBP)'] else 1
+        args.word = exp_info['Target Word']
+        args.inference = exp_info['Inference Mode']
+        args.trials = int(exp_info['Inference Trials']) if exp_info['Inference Trials'] else 5
+        args.blocks = int(exp_info['Blocks (Flashes)']) if exp_info['Blocks (Flashes)'] else 10
+        args.fps = int(exp_info['Monitor FPS']) if exp_info['Monitor FPS'] else 60
     except ValueError:
         dlg2 = gui.Dlg(title="Invalid Input")
-        dlg2.addText("Numerical fields received invalid input. Check Threshold or Timeout.")
+        dlg2.addText("You typed letters into a box that requires numbers!")
         dlg2.show()
         core.quit()
 
@@ -219,7 +343,6 @@ def main():
     # UI labels
     instruction = visual.TextStim(win, text="Initializing...", pos=(0, 0.85), color=FLASH_COLOR, height=0.08)
     typed_text = visual.TextStim(win, text="", pos=(0, -0.85), color='#FFFFFF', height=0.1)
-    context_label = visual.TextStim(win, text="", pos=(0, 0.95), color='#00FFFF', height=0.05) # Cyan context word
     
     # Pre-compute frames for exact 150ms timings (300ms ISI total)
     # 300ms ISI eliminates ERP temporal overlap entirely.
@@ -232,13 +355,11 @@ def main():
     if frames_flash_off < 1: frames_flash_off = 1
 
     def draw_all():
-        if current_state in ["CONTEXT_P300", "MAIN_SPELLER"]:
-            for row in grid_stims:
-                for stim in row:
-                    stim.draw()
+        for row in grid_stims:
+            for stim in row:
+                stim.draw()
         instruction.draw()
         typed_text.draw()
-        context_label.draw()
 
     def exec_flash(group_id, target_char):
         chars_flashed = []
@@ -299,187 +420,205 @@ def main():
             draw_all()
             win.flip()
 
-    current_spelled = ""
-    current_context = ""
-    current_state = "CONTEXT_SSVEP"
-    state_start_time = core.getTime()
-    autocomplete_words = []
-    ssvep_freqs_context = [10.0, 15.0]
-    ssvep_freqs_auto = [8.0, 10.0, 12.0, 15.0, 17.0]
+    current_word = ""
+    current_sentence = ""
 
     if args.inference:
+        print("Connecting to Backend Decoded marker stream (waiting for model training)...")
         dec_inlet = None
+        # Patient resolution: model training takes ~15s, so we wait up to 40s
         for i in range(40):
             streams = pylsl.resolve_byprop('name', 'Speller_Decoded', 1, 1.0)
             if streams:
                 dec_inlet = pylsl.StreamInlet(streams[0])
+                print(f"Backend Ready! Connection established after {i+1}s.")
                 break
-            core.wait(1.0)
+            print(f"  Still waiting for backend model to train... ({i+1}/40s)")
             
-        if not dec_inlet: core.quit()
-
-        outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
-        outlet.push_sample([f"SET_THRESHOLD:{args.llm_threshold}"], pylsl.local_clock())
+        if not dec_inlet:
+            from psychopy import gui
+            dlg = gui.Dlg(title="FATAL SYSTEM ERROR")
+            dlg.addText("Could not resolve Speller_Decoded stream!")
+            dlg.addText("Check the backend console — is the model still training?")
+            dlg.show()
+            core.quit()
         
-        while True:
-            if event.getKeys(keyList=['escape']):
-                outlet.push_sample(["SESSION_END"], pylsl.local_clock())
-                break
-            t = core.getTime()
-
-            if current_state == "CONTEXT_SSVEP":
-                instruction.setText("SSVEP: Choose Context Mode")
-                labels = ["Enter Context", "No Context"]
-                for i, (txt, freq) in enumerate(zip(labels, ssvep_freqs_context)):
-                    x = -600 if i == 0 else 600 # Maximum spacing
-                    box = visual.Rect(win, width=350, height=350, pos=(x, 0), 
-                                      fillColor=[1, 1, 1], units='pix')
-                    lbl = visual.TextStim(win, text=txt, pos=(x, 0), 
-                                          color=[-1, -1, -1], height=70, bold=True, units='pix', wrapWidth=320)
-                    if math.sin(2 * math.pi * freq * t) > 0:
-                        box.draw()
-                        lbl.draw()
-                instruction.draw()
+        for t in range(args.trials):
+            outlet.push_sample(["SESSION_START"], pylsl.local_clock())
+            instruction.setText("Freestyle - find your target character...")
+            
+            # 3 second break
+            for _ in range(int(3.0 * args.fps)):
+                draw_all()
                 win.flip()
-                marker, _ = dec_inlet.pull_sample(timeout=0.0)
-                if marker and marker[0].startswith("SSVEP_DECODED_"):
-                    f = float(marker[0].replace("SSVEP_DECODED_", ""))
-                    if f == 10.0:
-                        current_state = "CONTEXT_P300"
-                        instruction.setText("P300: Spell Context Word...")
-                    else:
-                        current_state = "MAIN_SPELLER"
-                        instruction.setText("P300: Spell Word (No Context)")
-                    outlet.push_sample(["SSVEP_STOP"], pylsl.local_clock())
-                    state_start_time = core.getTime()
-
-            elif current_state in ["CONTEXT_P300", "MAIN_SPELLER"]:
-                outlet.push_sample(["SESSION_START"], pylsl.local_clock())
-                for _ in range(int(3.0 * args.fps)):
+                
+            instruction.setText("Flashing...")
+            
+            char_found = None
+            for b in range(args.blocks):
+                if char_found:
+                    break
+                    
+                seq = generate_flash_sequence(args.mode, None)
+                for group in seq:
+                    exec_flash(group, None)
+             
+                # --- 1. CHECK FOR MANUAL KEYBOARD INPUT (TESTING) ---
+                keys = event.getKeys()
+                if keys:
+                    key_pressed = keys[0].upper()
+                    
+                    if key_pressed == 'ESCAPE':
+                        outlet.push_sample(["SESSION_END"], pylsl.local_clock())
+                        win.close()
+                        core.quit()
+                    
+                    # If the key matches a character in our matrix, accept it instantly
+                    valid_chars = [c for row in matrixChars for c in row]
+                    if key_pressed in valid_chars:
+                        char_found = key_pressed
+                        print(f"[MANUAL OVERRIDE] User typed '{char_found}'. Bypassing BCI decoder.")
+                        break  # Breaks the flash loop, char_found is set
+                
+                # --- 2. CHECK FOR BCI DECODER (ONLY IF NO KEY WAS PRESSED) ---
+                # This ensures the backend doesn't override your manual test
+                if dec_inlet and not char_found:
+                    marker, _ = dec_inlet.pull_sample(timeout=0.0)
+                    if marker and marker[0].startswith("DECODED_"):
+                        char_found = marker[0].replace("DECODED_", "")
+                        break
+                            
+                # Trigger an evaluation after a full block, but don't stop flashing
+                if not char_found:
+                    outlet.push_sample(["EVALUATE"], pylsl.local_clock())
+            
+            # If we reached max blocks without a dynamic stop
+            if not char_found:
+                instruction.setText("Finalizing... Decoding Fallback...")
+                draw_all()
+                win.flip()
+                outlet.push_sample(["TRIAL_END"], pylsl.local_clock())
+                
+                # Extended wait timeout to guarantee backend catch-up.
+                # We wait up to 10 seconds to completely eliminate race conditions,
+                # but it will break instantly as soon as the marker arrives.
+                for _ in range(int(10.0 * args.fps)):
                     draw_all()
                     win.flip()
-                char_found = None
-                for b in range(args.blocks):
-                    if char_found: break
-                    seq = generate_flash_sequence(args.mode, None)
-                    for group in seq:
-                        exec_flash(group, None)
+                    if event.getKeys(keyList=['escape']):
+                        outlet.push_sample(["SESSION_END"], pylsl.local_clock())
+                        win.close()
+                        core.quit()
+                        
+                    if dec_inlet:
                         marker, _ = dec_inlet.pull_sample(timeout=0.0)
                         if marker:
+                            print(f"[UI] Received Marker from Backend: {marker[0]}")
                             if marker[0].startswith("DECODED_"):
                                 char_found = marker[0].replace("DECODED_", "")
                                 break
-                            elif marker[0].startswith("SSVEP_PREDICTIONS:"):
-                                autocomplete_words = marker[0].replace("SSVEP_PREDICTIONS:", "").split(",")
-                                current_state = "AUTOCOMPLETE_SSVEP"
-                                outlet.push_sample(["SSVEP_START"], pylsl.local_clock())
-                                state_start_time = core.getTime()
-                                break
-                    if current_state == "AUTOCOMPLETE_SSVEP": break
-                    if not char_found: outlet.push_sample(["EVALUATE"], pylsl.local_clock())
-                if current_state == "AUTOCOMPLETE_SSVEP": continue
-                if not char_found:
-                    outlet.push_sample(["TRIAL_END"], pylsl.local_clock())
-                    for _ in range(int(3.0 * args.fps)):
-                        draw_all(); win.flip()
-                        marker, _ = dec_inlet.pull_sample(timeout=0.0)
-                        if marker and marker[0].startswith("DECODED_"):
-                            char_found = marker[0].replace("DECODED_", "")
-                            break
-                if char_found:
-                    if current_state == "CONTEXT_P300":
-                        if char_found == "_":
-                            current_state = "MAIN_SPELLER"
-                            context_label.setText(f"CONTEXT: {current_context}")
-                            outlet.push_sample([f"SET_CONTEXT:{current_context}"], pylsl.local_clock())
-                        elif char_found == "9": current_context = current_context[:-1]
-                        else: current_context += char_found
-                        instruction.setText(f"Context: {current_context}")
-                    else:
-                        if char_found == "9": current_spelled = current_spelled[:-1]
-                        elif char_found == "_": current_spelled += " "
-                        else: current_spelled += char_found
-                        typed_text.setText(current_spelled)
+                            
+            if char_found:
+                current_word += char_found
+                
+                if len(current_word) >= 2:
+                    current_word, current_sentence = handle_prediction_screen(win, current_word, current_sentence, args.fps, outlet, dec_inlet)
+                
+                typed_text.setText(current_sentence + current_word)
+                
+                # 3 sec illuminated preparation period between letters.
+                # All letters light up in faint white so the user can locate
+                # and focus on the next target before flashing resumes.
+                instruction.setText("Find the next letter...")
                 for row in grid_stims:
-                    for stim in row: stim.color = READY_COLOR
+                    for stim in row:
+                        stim.color = READY_COLOR
                 for _ in range(int(3.0 * args.fps)):
-                    draw_all(); win.flip()
+                    draw_all()
+                    win.flip()
+                # Reset all letters back to dim
                 for row in grid_stims:
-                    for stim in row: stim.color = DIM_COLOR
-
-            elif current_state == "AUTOCOMPLETE_SSVEP":
-                instruction.setText(f"Autocomplete: Select Word or wait {int(args.ssvep_timeout)}s to cancel")
-                # 5-point distributed layout (corners + center)
-                positions = [(-700, 350), (700, 350), (0, 0), (-700, -350), (700, -350)]
-                for i, (word, freq) in enumerate(zip(autocomplete_words, ssvep_freqs_auto)):
-                    pos = positions[i]
-                    box = visual.Rect(win, width=350, height=350, pos=pos, 
-                                      fillColor=[1, 1, 1], units='pix')
-                    lbl = visual.TextStim(win, text=word, pos=pos, 
-                                          color=[-1, -1, -1], height=50, bold=True, units='pix', wrapWidth=320)
-                    if math.sin(2 * math.pi * freq * t) > 0:
-                        box.draw()
-                        lbl.draw()
-                instruction.draw()
-                win.flip()
-                if core.getTime() - state_start_time > args.ssvep_timeout:
-                    current_state = "MAIN_SPELLER"
-                    outlet.push_sample(["SSVEP_TIMEOUT"], pylsl.local_clock())
-                    state_start_time = core.getTime()
-                marker, _ = dec_inlet.pull_sample(timeout=0.0)
-                if marker and marker[0].startswith("SSVEP_DECODED_"):
-                    f = float(marker[0].replace("SSVEP_DECODED_", ""))
-                    try:
-                        idx = ssvep_freqs_auto.index(f)
-                        selected_word = autocomplete_words[idx]
-                        parts = current_spelled.strip().split()
-                        if parts: parts[-1] = selected_word
-                        else: parts = [selected_word]
-                        current_spelled = " ".join(parts) + " "
-                        typed_text.setText(current_spelled)
-                        current_state = "MAIN_SPELLER"
-                        outlet.push_sample([f"WORD_SELECTED:{selected_word}"], pylsl.local_clock())
-                        state_start_time = core.getTime()
-                    except ValueError: pass
+                    for stim in row:
+                        stim.color = DIM_COLOR
+                        
+        # Inference complete, tell backend to save the recording
+        outlet.push_sample(["SESSION_END"], pylsl.local_clock())
+        
+        display_response_screen(win, current_sentence + current_word, args.fps)
+                
     else:
+        # SUPERVISED TRAINING
         for char in args.word:
             pos = get_char_pos(char)
-            if pos is None: continue
+            if pos is None:
+                continue
             r, c = pos
             target_stim = grid_stims[r][c]
+            
             instruction.setText(f"Focus on '{char}'...")
+            
             target_stim.color = FIXATION_COLOR
             target_stim.height = text_size_pop
+            
+            # 3 sec Fixation
             for _ in range(int(3.0 * args.fps)):
-                draw_all(); win.flip()
+                draw_all()
+                win.flip()
+                
+            # Erase fixation
             target_stim.color = DIM_COLOR
             target_stim.height = text_size_base
+            
             instruction.setText("Flashing...")
+            
             for b in range(args.blocks):
                 seq = generate_flash_sequence(args.mode, char)
                 for group in seq:
                     exec_flash(group, char)
+                    
                     if event.getKeys(keyList=['escape']):
-                        win.close(); core.quit()
-            current_spelled += char
-            typed_text.setText(current_spelled)
+                        win.close()
+                        core.quit()
+                        
+            current_word += char
+            typed_text.setText(current_word)
+            
+            # 3 sec illuminated preparation period between letters.
+            # All letters light up in faint white so the user can locate
+            # and focus on the next target before flashing resumes.
+            instruction.setText("Find the next letter...")
             for row in grid_stims:
-                for stim in row: stim.color = READY_COLOR
+                for stim in row:
+                    stim.color = READY_COLOR
             for _ in range(int(3.0 * args.fps)):
-                draw_all(); win.flip()
+                draw_all()
+                win.flip()
+            # Reset all letters back to dim
             for row in grid_stims:
-                for stim in row: stim.color = DIM_COLOR
+                for stim in row:
+                    stim.color = DIM_COLOR
+            
+            # 20 sec extended rest between words (after every space character)
             if char == '_':
                 for countdown in range(30, 0, -1):
                     instruction.setText(f"Word complete! REST: {countdown}s")
                     for _ in range(int(1.0 * args.fps)):
-                        draw_all(); win.flip()
+                        draw_all()
+                        win.flip()
                         if event.getKeys(keyList=['escape']):
-                            win.close(); core.quit()
+                            win.close()
+                            core.quit()
+        
         outlet.push_sample(["SESSION_END"], pylsl.local_clock())
 
+    instruction.setText("Session Complete. Esc to exit.")
+    draw_all()
+    win.flip()
+    event.waitKeys(keyList=['escape'])
+    
     win.close()
     core.quit()
+
 
 if __name__ == '__main__':
     main()

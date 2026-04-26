@@ -1,0 +1,133 @@
+APRIL 25-26
+PROJECTS SPECIFICATION
+PROJECT (1)
+EXPLORE THE UNIVERSE WTH YOUR BRAIN
+OVERVIEW
+Description: An immersive, hands-free space exploration
+platform that allows users to navigate a 3D universe using
+only their brain.
+Category: Programming.
+CORE MECHANISMS
+Target Selection (SSVEP): Star clusters and galaxies on the screen "twinkle" at
+specific, unique frequencies (e.g. 10Hz, 12Hz, 15Hz). When the user focuses their
+gaze on a specific star, the system detects the corresponding SSVEP in the visual
+cortex, triggering a "warp jump" or zoom-in to that location.
+Directional Control (MI): To rotate the camera, the user uses Motor Imagery (MI),
+imagining the movement of their left/right hand. The system classifies these
+internal motor intentions to provide smooth, continuous orientation in the 3D
+space.
+PROJECT OBJECTIVES
+Develop a beautiful & navigatable 3D Universe and deliver a fully functional
+prototype for the br41n.io hackathon.
+Successfully classify at least three distinct SSVEP frequencies (e.g., 10Hz,
+12Hz, 15Hz) for "warp jump" navigation.
+Successfully classify left/right Motor Imagery to control camera rotation in a
+Unity environment.
+Establish a rapid calibration protocol to allow new users to use the system
+within minutes.
+WINNING EDGE
+Combining two BCI paradigms for seamless navigation (SSVEP &
+MI)
+Creative & Original application for SSVEP (flickering stars)
+Visual strikingness & beauty
+Translational potential & real-world impact →  the navigation
+mechanisms can be easily adapted into any BCI navigation system,
+not just floating around the cosmos!
+SIGNAL 
+PROCESSING  
+AI & ML
+UNITY & UX
+INTEGRATION
+& TESTING
+NEURO-NAVIGATE
+
+W BS
+PROJECT (2): CONNECT YOUR
+BRAIN TO CHATGPT
+OVERVIEW
+Description: A BCI communication system. It combines a neural
+speller with a mental state inference model, leveraging the
+ChatGPT API to predict user intent, speed up typing, and adapt
+AI responses based on the user's real-time cognitive state.
+Category: Programming.
+LLM-Powered Predictive Spelling (EP): The user spells only the first 1-2 letters of a
+word using an EP Grid. They are instantly sent to the ChatGPT API, which predicts
+the three most likely words based on the user's overarching task, displaying them
+as selectable targets (SSVEP).
+Mental State Context (Bandpower Inference): While the user spells, the system
+analyzes EEG rhythms to classify their cognitive load (e.g., "Highly Focused" vs.
+"Fatigued"). This inferred state is appended to the final prompt, instructing the LLM
+to dynamically adjust the tone and complexity of its response to match the user's
+mental state.CORE MECHANISMS
+PROJECT OBJECTIVES
+Develop a visually-pleasing Unity UI that integrates a standard BCI speller
+grid with a static row for three LLM-generated autocomplete suggestions.
+Successfully extract and classify EEG wave ratios to determine at least
+three distinct mental states (High Focus, Fatigue, Neutral) in real-time.
+Develop a backend Python API that merges the spelled text and the mental
+state context into a single prompt, and sends the response to the UI.
+Reduce standard BCI text-generation time through predictive autocomplete.
+WINNING EDGE
+A unique & creative approach for solving the famous problem of
+slow BCI spellers. (LLM + SSVEP powered autocomplete)
+Contextual Awareness: ChatGPT won’t predict words randomly,
+but based on the topic at hand.
+Mental State Awareness: ChatGPT will tailor its response based on
+the user’s mental state.
+SIGNAL 
+PROCESSING  
+BANDPOWER &
+EP INFERENCE
+UNITY & UX
+INTEGRATION
+& TESTING
+BRAIN<->CHATGPT
+
+W BS
+PROJECT (3): NEURAL DATA ANALYSIS
+OVERVIEW
+Description: Analyze BCI dataset offered by g.tec during the
+hackathon. The goal is to optimize the signal processing pipeline:
+pre-processing, feature extraction, & classification, and compare
+the results with state-of-the-art techniques.
+Category: Data Analysis
+CORE MECHANISMS
+Pre-processing Pipeline: The system ingests the provided data and applies
+appropriate pre-processing techniques.
+Feature Extraction: Select the most expressive features for the dataset and the
+required classification task.
+Classification: Select a suitable ML model and optimize its parameters to achieve
+better than state-of-the-art results.
+PROJECT OBJECTIVES
+Execute a complete data analysis pipeline in a purely software-based
+environment.
+Extract the most useful & expressive features.
+Achieve state-of-the-art classification accuracy.
+Document the performance of implemented algorithms against published
+research.
+WINNING EDGE
+Extract useful & expressive features.
+Achieve better than state-of-the-art classification accuracy.
+Rigorous reporting & presentation.
+SIGNAL 
+PROCESSING  
+FEATURE
+EXTRACTION
+ML/DL
+CLASSIFICATION
+NEURO-ANALYSIS
+
+W BS
+GENERAL NOTES
+Shared Foundation: Several tasks overlap across projects (e.g., signal processing,
+SSVEP protocol). These foundational pipelines are our immediate priority.
+The Hardware-Free Head Start: We have one headset and many brilliant minds. Do not
+wait for hardware access. Teams can immediately begin building and testing pipelines
+using public datasets.
+Communication is our API: With parallel development, silence is a blocker. Make sure
+you “work out loud”, send your progress in the WP group, and co-work with your
+teammates on Discord!
+The Hackathon Mindset: We are building prototypes, not medical devices. Prioritize a
+low-latency proof-of-concept and a good demo over a perfect system. Fail fast,
+adjust, and keep moving.
+LET’S WIN THIS!!

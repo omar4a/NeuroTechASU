@@ -15,53 +15,31 @@ How it works:
 
 import os
 import sys
-
-# --- PSYCHOPY RUNNER ENVIRONMENT FIX ---
-for version in ["310", "311", "312", "313", "314"]:
-    _user_site = os.path.expanduser(fr"~\AppData\Roaming\Python\Python{version}\site-packages")
-    if os.path.isdir(_user_site) and _user_site not in sys.path:
-        sys.path.append(_user_site) # Append instead of insert(0) to avoid version clashes
-sys.path.append(os.getcwd())
-
-# --- PERSISTENT LOGGING ---
-log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend_debug_log.txt")
-debug_log = open(log_path, "w", buffering=1) # Line-buffered
-sys.stdout = debug_log
-sys.stderr = debug_log
-# --------------------------
-
 import numpy as np
 import pylsl
-print(f"\n--- BACKEND DEBUG LOG STARTED: {pylsl.local_clock()} ---")
 import asyncio
 from collections import deque
-import pickle
-import math
-import scipy.special
-import asrpy
-import mne
 
-from sklearn.pipeline import make_pipeline
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+# PsychoPy Runner isolates the environment, stripping standard user site-packages.
+# We append the standard Python 3.10 user site (where pyriemann/mne/sklearn live)
+# to sys.path. We APPEND so that PsychoPy's own libraries take priority.
+_user_site = os.path.expanduser(r"~\AppData\Roaming\Python\Python310\site-packages")
+if os.path.isdir(_user_site) and _user_site not in sys.path:
+    sys.path.append(_user_site)
+
+# Import SSVEP Classifier
+ssvep_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "SSVEP Protocol"))
+if ssvep_path not in sys.path:
+    sys.path.append(ssvep_path)
+from ssvep_realtime import SSVEPClassifier
+
+# Standard scientific BCI libraries
 from pyriemann.spatialfilters import Xdawn
 from pyriemann.estimation import XdawnCovariances
 from pyriemann.classification import MDM
 from mne.decoding import Vectorizer
-
-# [NEW] Project 2 Paths: Inject Zeina_Branch and SSVEP Protocol
-_backend_dir = os.path.dirname(os.path.abspath(__file__))
-_root_dir = os.path.dirname(os.path.dirname(_backend_dir))
-
-zeina_path = os.path.join(_root_dir, "Zeina_Branch")
-if zeina_path not in sys.path:
-    sys.path.append(zeina_path)
-
-ssvep_path = os.path.join(_root_dir, "SSVEP Protocol")
-if ssvep_path not in sys.path:
-    sys.path.append(ssvep_path)
-
-import _client
-from ssvep_realtime import SSVEPClassifier
+from sklearn.pipeline import make_pipeline
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 
 from signal_processing import (
     FS, EPOCH_LEN, SAMPLES_PER_EPOCH, BASELINE_SAMPLES,
@@ -76,6 +54,14 @@ MAX_BUFFER_SAMPLES = FS * 120
 
 class RealTimeInference:
     def __init__(self):
+        # Hybrid BCI States
+        self.bci_mode = "P300" # Toggles between P300 and SSVEP
+        self.ssvep_targets = [10.0, 12.0, 15.0, 8.57, 7.5] # 5 distinct options
+        self.ssvep_classifier = SSVEPClassifier(targets=self.ssvep_targets)
+        import collections
+        self.ssvep_buffer = collections.deque(maxlen=int(FS * 1.0)) # 1-second rolling window
+        self.ssvep_history = collections.deque(maxlen=4)
+        self.roi_indices = [5, 6, 7] # PO7, Oz, PO8 indices from ACTIVE_CHANNEL_INDICES
         # Ring buffers: Deque is like a pipe; when you push data in one end, 
         # old data falls out the other end once it's full.
         self.eeg_data = deque(maxlen=MAX_BUFFER_SAMPLES)
@@ -106,23 +92,18 @@ class RealTimeInference:
         self.recorded_flashes = []
         self.recorded_predictions = []
         
+        # Ensemble weight for LDA vs MDM. Measured: MDM via softmax-over-
+        # negative-Riemannian-distance is essentially uncalibrated noise
+        # (target p mean 0.513, non-target 0.484, std ~0.02), so mixing it
+        # with LDA at 0.5 halves LDA's effective signal. Keep at 1.0 until
+        # MDM is replaced with a proper calibration (Platt / isotonic).
+        self.active_algo = "ensemble"
+        self.ensemble_weight_lda = 1.0
+        
         self.model_lda = None
-        self.kde_target = None
-        self.kde_nontarget = None
-        self.asr_filter = None
-        
-        # [NEW] Project 2: BCI States & Buffers
-        self.bci_mode = "P300" # Toggles between P300 and SSVEP
-        self.ssvep_targets = [8.0, 10.0, 12.0, 15.0, 17.0] # 5 optimized options
-        self.ssvep_classifier = SSVEPClassifier(targets=self.ssvep_targets)
-        self.ssvep_buffer = deque(maxlen=int(FS * 1.0)) # 1-second rolling window
-        self.ssvep_history = deque(maxlen=5) # 5-second voting window
-        self.roi_indices = [5, 6, 7] # PO7, Oz, PO8 indices for SSVEP
-        
-        self.context_word = ""
-        self.sentence_history = ""
-        self.current_word = ""
-        self.llm_threshold = 0.9
+        self.model_mdm = None
+        self._mdm_cov_transformer = None
+        self._mdm_classifier = None
         
         # LSL Outlet: How we talk back to the PsychoPy UI.
         # We don't create this until the model is trained.
@@ -148,40 +129,54 @@ class RealTimeInference:
         # Filter to use only our 8 EEG channels
         X = X[:, ACTIVE_CHANNEL_INDICES, :]
         
-        # xDAWN + LDA Pipeline
+        # Pipeline 1: xDAWN + LDA
         # xDAWN is a "spatial filter" that ignores noise and focuses on the P300.
         # LDA is a classic classifier that draws a line between Target and Non-Target.
         print("Training xDAWN + LDA Pipeline...")
         self.model_lda = make_pipeline(
-            Xdawn(nfilter=4),
+            Xdawn(nfilter=3),
             Vectorizer(),
-            LinearDiscriminantAnalysis(solver='eigen', shrinkage='auto')
+            LinearDiscriminantAnalysis(solver='lsqr', shrinkage=0.7)
         )
         self.model_lda.fit(X, y)
         
-        # Load KDE Distributions
-        print("Loading Bayesian KDE Distributions...")
-        kde_path = os.path.join(TRAINING_DATA_DIR, "kde_distributions.pkl")
-        with open(kde_path, 'rb') as f:
-            kdes = pickle.load(f)
-            self.kde_target = kdes['target']
-            self.kde_nontarget = kdes['nontarget']
-            
-        # [TASK 2] Load Pre-fitted ASR State
-        print("Loading Pre-fitted ASR State...")
-        asr_path = os.path.join(TRAINING_DATA_DIR, "asr_state.pkl")
-        if os.path.exists(asr_path):
-            with open(asr_path, 'rb') as f:
-                self.asr_filter = pickle.load(f)
-        else:
-            print("WARNING: asr_state.pkl not found. ASR filtering will be unavailable.")
-
-        print("Model, KDEs, and ASR State Loaded Successfully.")
+        # Pipeline 2: Riemannian MDM
+        # This is high-level math that looks at the "geometry" of brain signals.
+        print("Training Riemannian MDM Pipeline...")
+        self._mdm_cov_transformer = XdawnCovariances(nfilter=3, estimator="oas")
+        self._mdm_classifier = MDM()
+        X_cov = self._mdm_cov_transformer.fit_transform(X, y)
+        self._mdm_classifier.fit(X_cov, y)
+        
+        print("Models Trained Successfully.")
         
         # Now publish the "Ready" signal for the UI
         info_dec = pylsl.StreamInfo('Speller_Decoded', 'Markers', 1, 0, 'string', 'bci_decoder_123')
         self.decoded_outlet = pylsl.StreamOutlet(info_dec)
 
+    def _mdm_predict_proba(self, X_test):
+        """
+        Calculates probabilities from the MDM model.
+        MDM normally just gives a "Yes/No", but we need a "How sure are you?" percentage.
+        """
+        X_cov = self._mdm_cov_transformer.transform(X_test)
+        from pyriemann.utils.distance import distance
+        
+        n_samples = X_cov.shape[0]
+        n_classes = len(self._mdm_classifier.classes_)
+        distances = np.zeros((n_samples, n_classes))
+        
+        # Measure how "far" the current brain wave is from the "Target" average.
+        for j, centroid in enumerate(self._mdm_classifier.covmeans_):
+            for i in range(n_samples):
+                distances[i, j] = distance(X_cov[i], centroid, metric=self._mdm_classifier.metric)
+        
+        # Convert distance to probability (closer = higher probability)
+        neg_distances = -distances
+        neg_distances -= neg_distances.max(axis=1, keepdims=True)
+        exp_neg_d = np.exp(neg_distances)
+        probs = exp_neg_d / exp_neg_d.sum(axis=1, keepdims=True)
+        return probs
 
     async def lsl_worker(self, inlet):
         """Continuously pulls EEG data into our 120-second ring buffer."""
@@ -216,29 +211,27 @@ class RealTimeInference:
                 self.recorded_eeg_data.extend(chunk)
                 self.recorded_eeg_times.extend(synthetic_timestamps)
                 
-                # [NEW] Real-time SSVEP Processing
                 if self.bci_mode == "SSVEP":
                     for sample in chunk:
                         roi_data = [sample[idx] for idx in self.roi_indices]
                         self.ssvep_buffer.append(roi_data)
                         
                         if len(self.ssvep_buffer) == self.ssvep_buffer.maxlen:
-                            X = np.array(self.ssvep_buffer).T # (Channels, Samples)
+                            X = np.array(self.ssvep_buffer).T
                             self.ssvep_buffer.clear()
                             
-                            pred, _ = self.ssvep_classifier.classify_cca(X)
+                            pred, _ = self.ssvep_classifier.classify_fbcca(X)
                             self.ssvep_history.append(pred)
                             
-                            # Majority voter: 3 out of 4 identical predictions
                             if len(self.ssvep_history) == self.ssvep_history.maxlen:
-                                from collections import Counter
-                                counts = Counter(self.ssvep_history)
-                                most_common, count = counts.most_common(1)[0]
-                                if count > 3: # Need 4/5 or 5/5 agreement (5-second window)
-                                    print(f"*** SSVEP DETECTED: {most_common} Hz ***")
-                                    self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common}"], pylsl.local_clock())
+                                import collections
+                                counter = collections.Counter(self.ssvep_history)
+                                most_common_pred, count = counter.most_common(1)[0]
+                                if count > 2:
+                                    print(f"*** SSVEP STOP *** FOUND FREQ: {most_common_pred}")
+                                    self.decoded_outlet.push_sample([f"SSVEP_DECODED_{most_common_pred}"], pylsl.local_clock())
                                     self.ssvep_history.clear()
-                                    self.bci_mode = "P300" # Revert after selection
+                                    self.bci_mode = "P300" # Auto-reset
             await asyncio.sleep(0.01)
 
     async def marker_worker(self, marker_inlet):
@@ -260,34 +253,13 @@ class RealTimeInference:
                     self.current_trial_flashes.append((timestamp, group))
                     self.recorded_flashes.append({"time": timestamp, "group": group})
                 
-                # [NEW] Project 2 Markers
-                elif m_str.startswith("SET_THRESHOLD:"):
-                    self.llm_threshold = float(m_str.replace("SET_THRESHOLD:", ""))
-                    print(f"LLM Trigger Threshold Updated: {self.llm_threshold}")
-
-                elif m_str.startswith("SET_CONTEXT:"):
-                    self.context_word = m_str.replace("SET_CONTEXT:", "").strip()
-                    print(f"Global Context Updated: {self.context_word}")
-                
                 elif m_str == "SSVEP_START":
-                    print("Backend switching to SSVEP mode...")
+                    print("Switching engine to SSVEP Decoding...")
                     self.bci_mode = "SSVEP"
                     self.ssvep_buffer.clear()
-                    self.ssvep_history.clear()
-                
-                elif m_str == "SSVEP_TIMEOUT":
-                    print("Backend reverting to P300 mode (SSVEP Timeout)...")
-                    # DO NOT clear self.current_word here. The user didn't pick anything,
-                    # so the spelled letters so far stay in the prefix buffer.
-                    self.bci_mode = "P300"
                     
-                elif m_str.startswith("WORD_SELECTED:"):
-                    selected_word = m_str.replace("WORD_SELECTED:", "").strip()
-                    print(f"Backend reverting to P300 mode (Selected: {selected_word})")
-                    # Update sentence history for future LLM predictions
-                    self.sentence_history += (" " if self.sentence_history else "") + selected_word
-                    # RESET the prefix buffer because a word was completed
-                    self.current_word = ""
+                elif m_str == "SSVEP_STOP":
+                    print("Switching engine to P300 Decoding...")
                     self.bci_mode = "P300"
                 
                 elif m_str == "EVALUATE":
@@ -299,9 +271,6 @@ class RealTimeInference:
                             print(f"*** DYNAMIC STOP *** FOUND: {predicted_char}")
                             self.decoded_outlet.push_sample([f"DECODED_{predicted_char}"], pylsl.local_clock())
                             self.recorded_predictions.append({"time": pylsl.local_clock(), "predicted": predicted_char, "type": "dynamic_stop"})
-                            
-                            # [NEW] Project 2: Update current word and call LLM
-                            self._handle_character_decoded(predicted_char)
                             self._reset_trial_state()
                 
                 elif m_str == "TRIAL_END":
@@ -328,9 +297,6 @@ class RealTimeInference:
                         print(f"---------> FINAL GUESS: {predicted_char} <---------")
                         self.decoded_outlet.push_sample([f"DECODED_{predicted_char}"], pylsl.local_clock())
                         self.recorded_predictions.append({"time": pylsl.local_clock(), "predicted": predicted_char, "type": "fallback"})
-                        
-                        # [NEW] Project 2: Update current word and call LLM
-                        self._handle_character_decoded(predicted_char)
                     else:
                         print("ERROR: Failed to decode letter after 3s timeout.")
                         
@@ -350,26 +316,6 @@ class RealTimeInference:
                     
             await asyncio.sleep(0.01)
 
-    def _handle_character_decoded(self, char):
-        """Internal logic to manage words/sentences and trigger LLM."""
-        if char == "9": # Backspace (As per Engineering Spec)
-            if self.current_word:
-                self.current_word = self.current_word[:-1]
-            elif self.sentence_history:
-                parts = self.sentence_history.strip().split()
-                if parts:
-                    self.current_word = parts[-1]
-                    self.sentence_history = " ".join(parts[:-1])
-            print(f"  [BACKSPACE] Word: '{self.current_word}' | History: '{self.sentence_history}'")
-        elif char == "_": # Space / End of word
-            self.sentence_history += (" " if self.sentence_history else "") + self.current_word
-            self.current_word = ""
-            print(f"  [SPACE] Current Sentence: '{self.sentence_history}'")
-        else:
-            self.current_word += char
-            # Trigger LLM async prediction for the current word fragment
-            asyncio.create_task(self.predict_words(self.current_word))
-
     def decode_trial(self, check_threshold=False):
         """
         The Brain of the Brain-Computer Interface.
@@ -382,7 +328,10 @@ class RealTimeInference:
         if not new_flashes: return self._evaluate_accumulated(check_threshold)
 
         time_arr = np.array(self.eeg_times)
-        data_arr = np.array(self.eeg_data)[:, :8]
+        data_arr = np.array(self.eeg_data)
+        if data_arr.ndim != 2 or data_arr.shape[1] < 8:
+            return self._evaluate_accumulated(check_threshold)
+        data_arr = data_arr[:, :8]
 
         # Safety: deques are extended (data, then times) in lsl_worker with
         # no await between, so lengths should match. Clip just in case a
@@ -393,23 +342,6 @@ class RealTimeInference:
 
         # 2. Filter the entire buffer to avoid filtfilt edge transients destroying the P300
         data_filtered = apply_preprocessing(data_arr)
-        
-        # [TASK 2] Fast Real-Time ASR (Transform Only)
-        if self.asr_filter is None:
-            raise RuntimeError("CRITICAL: ASR filter state not loaded. Run apply_offline_asr.py first!")
-
-        # Transpose to [n_channels, n_samples] as expected by asrpy
-        transposed_data = data_filtered.T
-        
-        # MNE constraint: asrpy.ASR.transform strictly requires an mne.Raw object
-        info = mne.create_info(ch_names=[f'CH{i}' for i in range(8)], sfreq=FS, ch_types='eeg')
-        raw = mne.io.RawArray(transposed_data, info, verbose=False)
-        
-        # Apply the pre-fitted filter (No fit() call here to avoid thread blocking)
-        raw_clean = self.asr_filter.transform(raw)
-        
-        # Transpose back to [n_samples, n_channels]
-        data_filtered = raw_clean.get_data().T
 
         X_test = []
         groups = []
@@ -471,30 +403,34 @@ class RealTimeInference:
         self._processed_flash_idx = last_processed_idx
         if not X_test: return self._evaluate_accumulated(check_threshold)
         
-        # 4. Extract continuous decision scores
+        # 4. Ask the AI: "How much P300 signal is in these windows?"
+        if len(X_test) == 0:
+            return self._evaluate_accumulated(check_threshold)
         X_test = np.array(X_test)
-        decision_scores = self.model_lda.decision_function(X_test)
+        if X_test.ndim != 3:
+            return self._evaluate_accumulated(check_threshold)
+        X_test = np.array(X_test)
+        y_probs_lda = self.model_lda.predict_proba(X_test)[:, 1]
+
+        # Skip MDM when LDA is doing all the work — saves a full
+        # Riemannian-distance pass per EVALUATE.
+        if self.ensemble_weight_lda >= 1.0:
+            y_probs = y_probs_lda
+        else:
+            y_probs_mdm = self._mdm_predict_proba(X_test)[:, 1]
+            y_probs = (self.ensemble_weight_lda * y_probs_lda
+                       + (1 - self.ensemble_weight_lda) * y_probs_mdm)
         
-        # 5. Bayesian Log-Probability Update using KDE
-        for score, group in zip(decision_scores, groups):
-            # Evaluate KDE and clip to prevent log(0) underflow
-            lh_target = np.clip(self.kde_target.evaluate(score)[0], 1e-10, None)
-            lh_nontarget = np.clip(self.kde_nontarget.evaluate(score)[0], 1e-10, None)
-            
-            log_lh_target = np.log(lh_target)
-            log_lh_nontarget = np.log(lh_nontarget)
-            
+        # 5. Robust Additive Update: For every character, update its score.
+        # Instead of using brittle log-probabilities, we simply add the raw probabilities.
+        # This prevents a single overconfident false-negative from destroying a character's score.
+        for i, group in enumerate(groups):
+            p_target = np.clip(y_probs[i], 0.0, 1.0)
             for c in MATRIX_CHARS:
                 if c in group:
-                    self._accumulated_scores[c] += log_lh_target
+                    self._accumulated_scores[c] += p_target
                 else:
-                    self._accumulated_scores[c] += log_lh_nontarget
-                    
-        # 6. Normalize Log-Probabilities to prevent unbounded drift
-        scores_arr = np.array(list(self._accumulated_scores.values()))
-        logsum = scipy.special.logsumexp(scores_arr)
-        for c in MATRIX_CHARS:
-            self._accumulated_scores[c] -= logsum
+                    self._accumulated_scores[c] += (1.0 - p_target)
         
         return self._evaluate_accumulated(check_threshold)
 
@@ -510,7 +446,7 @@ class RealTimeInference:
         # bias toward MATRIX_CHARS[0] ('A'). Surface the failure instead so
         # the UI can prompt a repeat or the session can be flagged.
         if np.ptp(scores_arr) < 1e-9:
-            return "!", False
+            return MATRIX_CHARS[0], False
 
         # Use successfully-updated-flash count as the denominator, not
         # _processed_flash_idx — the latter counts artifact-rejected flashes
@@ -518,107 +454,41 @@ class RealTimeInference:
         # confidence in high-artifact sessions.
         flashes_processed = self._n_decoder_updates
         if flashes_processed == 0:
-            return "!", False
+            return None, False
 
-        # Convert from normalized log-probabilities back to standard probabilities
-        # Because we used logsumexp, these will sum to exactly 1.0
-        probs = {c: math.exp(log_p) for c, log_p in self._accumulated_scores.items()}
-        
-        # Sort characters by their probability in descending order
-        sorted_chars = sorted(probs.items(), key=lambda kv: kv[1], reverse=True)
-        best_char = sorted_chars[0][0]
-        p_top1 = sorted_chars[0][1]
-        p_top2 = sorted_chars[1][1]
+        best_char = max(self._accumulated_scores.items(), key=lambda kv: kv[1])[0]
 
-        # If the trial ended naturally (TRIAL_END), return the best guess
+        # If the trial ended naturally, return the best guess so far.
         if not check_threshold:
             return best_char, False
 
-        # --- DYNAMIC STOPPING ---
-        # Calculate the Uncertainty Ratio (UQ). 
-        # A UQ of 98.0 means the top character is 98x more likely than the second.
-        # This is an extremely conservative threshold preventing premature firing.
-        uq_ratio = p_top1 / (p_top2 + 1e-12) # Add epsilon to prevent div by zero
-        
-        print(f"  [EVAL] {best_char}: P={p_top1:.3f} | UQ Ratio={uq_ratio:.1f}")
-
-        if uq_ratio >= 98.0:
-            return best_char, True
-            
+        # Dynamic stop is disabled until a proper posterior is in place.
+        #
+        # The prior formula
+        #
+        #     confidence = (max_score - mean_score) / (flashes * k)
+        #
+        # is dimensionally (signal / flashes) — both numerator and
+        # denominator scale linearly with flash count, so the ratio is
+        # essentially constant after the first block, independent of how
+        # much evidence has accumulated. That caused early firing on a
+        # still-noisy accumulator and committed the wrong letter (target
+        # LMFAO → HAMSE on the Apr-24 session; raising the threshold
+        # from 0.85 to 0.99 didn't fix it because the ratio is nearly
+        # constant with N). A correct dynamic stop needs a posterior
+        # whose concentration grows with N — a log-prob Bayesian
+        # accumulator with bounded p, or a rank-stability heuristic
+        # across consecutive EVALUATE calls. Until that is rebuilt,
+        # rely on TRIAL_END's fallback path, which uses the full
+        # args.blocks × events-per-block budget before committing
+        # (≥ 95 % accuracy at 6 blocks in simulation).
         return None, False
-
-    # [NEW] Project 2: LLM Word Completion Hook
-    async def predict_words(self, partial_word):
-        """Async call to Groq for word completion and self-reported confidence."""
-        if not partial_word or partial_word == "_":
-            return
-            
-        print(f"Fetching predictions for: '{partial_word}' (Context: {self.context_word})")
-        
-        system_prompt = (
-            "You are a predictive autocomplete assistant for an error-prone Brain-Computer Interface (BCI) speller.\n"
-            "The user is typing letter-by-letter, and there may be typos or incorrect characters.\n\n"
-            "INPUTS:\n"
-            f"1) CONTEXT: '{self.context_word}'\n"
-            f"2) PREFIX (spelled letters so far): '{partial_word}'\n"
-            f"3) SENTENCE (words typed so far): '{self.sentence_history}'\n\n"
-            "Output exactly 5 single-word completion suggestions as a comma-separated list in 'word:prob' format.\n"
-            "Example: brain:0.8, bread:0.05, bring:0.05, bridge:0.05, bright:0.05.\n"
-            "The sum of probabilities should reflect your confidence that the intended word is in this list."
-        )
-        
-        try:
-            client = _client.get_client("SPELLER")
-            model = _client._get_model_for_type("SPELLER")
-            
-            # Offload blocking API call to a thread
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(None, lambda: client.chat.completions.create(
-                model=model,
-                messages=[{"role": "system", "content": system_prompt},
-                          {"role": "user", "content": f"Complete: {partial_word}"}],
-                temperature=0.0
-            ))
-            
-            content = response.choices[0].message.content
-            # Parse Format: word:prob, word:prob...
-            pairs = [p.strip().split(":") for p in content.split(",")]
-            
-            words = []
-            probs = []
-            for p in pairs:
-                if len(p) == 2:
-                    words.append(p[0].strip())
-                    try:
-                        probs.append(float(p[1].strip()))
-                    except:
-                        probs.append(0.0)
-            
-            if len(words) < 5: 
-                words += [""] * (5 - len(words))
-                probs += [0.0] * (5 - len(probs))
-            
-            words = words[:5]
-            probs = probs[:5]
-            cum_prob = sum(probs)
-            
-            print(f"  Predictions: {words} | Cumulative Confidence: {cum_prob:.3f}")
-            
-            # If high confidence (> threshold), tell UI to switch to SSVEP screen
-            if cum_prob > self.llm_threshold:
-                print("  [LLM] High confidence. Triggering SSVEP UI...")
-                marker = f"SSVEP_PREDICTIONS:{','.join(words)}"
-                self.decoded_outlet.push_sample([marker], pylsl.local_clock())
-                
-        except Exception as e:
-            print(f"  [LLM ERROR] {e}")
 
     def _reset_trial_state(self):
         """Clear memory for a new letter."""
         self._processed_flash_idx = 0
         self._n_decoder_updates = 0
         self.current_trial_flashes = []
-        # Initialize with uniform prior log-probabilities
         self._accumulated_scores = {c: 0.0 for c in MATRIX_CHARS}
 
     async def main_loop(self):
