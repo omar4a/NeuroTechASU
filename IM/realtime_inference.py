@@ -3,7 +3,7 @@ import time
 from collections import deque
 import numpy as np
 import scipy.signal as signal
-from pylsl import StreamInlet, resolve_stream
+from pylsl import StreamInlet, resolve_byprop
 import joblib
 import serial
 
@@ -30,7 +30,7 @@ def lsl_worker():
     print("[LSL] Resolving EEG stream...")
     
     # Find the LSL stream. Change 'type' to 'name' if you want to strictly match 'UnicornMock'
-    streams = resolve_stream('type', 'EEG')
+    streams = resolve_byprop('type', 'EEG')
     inlet = StreamInlet(streams[0], max_buflen=1, max_chunklen=1)
     print(f"[LSL] Connected to stream: {streams[0].name()}")
     
@@ -38,17 +38,22 @@ def lsl_worker():
         # Pull incoming chunk of data
         chunk, timestamps = inlet.pull_chunk()
         if chunk:
-            chunk = np.array(chunk).T # Transpose to (8, n_samples)
+            chunk = np.array(chunk).T # Transpose to (n_channels, n_samples)
+            
+            # Match channel count to ring_buffer (e.g., take first 8 channels if stream has 9)
+            n_channels_to_copy = min(chunk.shape[0], ring_buffer.shape[0])
+            chunk = chunk[:n_channels_to_copy, :]
+            
             n_new = chunk.shape[1]
             
             with buffer_lock:
                 if n_new >= WINDOW_SAMPLES:
                     # If chunk is larger than buffer, keep latest
-                    ring_buffer[:, :] = chunk[:, -WINDOW_SAMPLES:]
+                    ring_buffer[:n_channels_to_copy, :] = chunk[:, -WINDOW_SAMPLES:]
                 else:
                     # Roll buffer left and append new samples
-                    ring_buffer[:, :-n_new] = ring_buffer[:, n_new:]
-                    ring_buffer[:, -n_new:] = chunk
+                    ring_buffer[:n_channels_to_copy, :-n_new] = ring_buffer[:n_channels_to_copy, n_new:]
+                    ring_buffer[:n_channels_to_copy, -n_new:] = chunk
 
 def main():
     """

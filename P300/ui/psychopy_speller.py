@@ -471,13 +471,13 @@ def main():
                 elapsed_time = core.getTime() - state_start_time
                 
                 if elapsed_time > 5.0:
-                    # Place Continue in the bottom right corner
-                    pos = (0.85, -0.75)
-                    box = visual.GratingStim(win, tex='sqrXsqr', size=(0.35, 0.3), pos=pos, 
-                                             sf=15.0, color=[1, 1, 1], contrast=0.6, units='norm')
-                    bg = visual.Rect(win, width=0.35, height=0.15, pos=pos, fillColor=[-0.9, -0.9, -0.9], units='norm')
-                    lbl = visual.TextStim(win, text="Continue", pos=pos, 
-                                          color=[1, 1, 1], height=0.12, bold=True, units='norm')
+                    # High-visibility contrast scheme for the Continue button
+                    box = visual.GratingStim(win, tex='sqrXsqr', size=(0.4, 0.35), pos=pos, 
+                                             sf=15.0, color=[1, 1, 1], contrast=0.7, units='norm')
+                    # Bright Yellow Plate for maximum ocular contrast
+                    bg = visual.Rect(win, width=0.45, height=0.2, pos=pos, fillColor=[1, 1, -1], units='norm')
+                    lbl = visual.TextStim(win, text="CONTINUE", pos=pos, 
+                                          color=[-1, -1, -1], height=0.12, bold=True, units='norm')
                     
                     if math.sin(2 * math.pi * 15.0 * t) > 0:
                         box.draw()

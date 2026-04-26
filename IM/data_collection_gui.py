@@ -1,6 +1,6 @@
 import customtkinter as ctk
 import random
-from pylsl import StreamInfo, StreamOutlet
+from pylsl import StreamInfo, StreamOutlet, local_clock
 
 # Configure the UI framework
 ctk.set_appearance_mode("dark")
@@ -69,8 +69,8 @@ class DataCollectionGUI(ctk.CTk):
             
         self.update()
         
-        # Simultaneously push the LSL marker
-        self.outlet.push_sample([marker])
+        # Simultaneously push the LSL marker with a precise timestamp
+        self.outlet.push_sample([marker], local_clock())
         
         # Step 2: Hold the cue on screen for exactly 4.0 seconds
         self.after(4000, self.remove_cue)

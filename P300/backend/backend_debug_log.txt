@@ -1,5 +1,5 @@
 
---- BACKEND DEBUG LOG STARTED: 46726.6763701 ---
+--- BACKEND DEBUG LOG STARTED: 53199.7212361 ---
 Resolving LSL Streams...
 Training models in background...
 Synchronizing LSL clocks... (3 seconds)
@@ -11,59 +11,69 @@ Model, KDEs, and ASR State Loaded Successfully.
 
 [READY] Engine active and models trained. Decoding dynamic markers...
 Backend switching to SSVEP mode... (SSVEP_START)
-LLM Trigger Threshold Updated: 0.8
+LLM Trigger Threshold Updated: 0.5
 [READY] Clock sync complete. Pulling data.
-*** SSVEP DETECTED: 10.0 Hz ***
+*** SSVEP DETECTED: 12.0 Hz ***
 New letter trial starting...
-  [EVAL] A: P=0.548 | UQ Ratio=3.5
-  [EVAL] A: P=0.855 | UQ Ratio=7.5
-  [EVAL] A: P=0.719 | UQ Ratio=2.6
-  [EVAL] B: P=0.922 | UQ Ratio=14.0
-  [EVAL] B: P=0.930 | UQ Ratio=14.0
-  [EVAL] B: P=0.981 | UQ Ratio=52.6
-  [EVAL] B: P=0.998 | UQ Ratio=550.9
+  [EVAL] A: P=0.566 | UQ Ratio=6.1
+  [EVAL] B: P=0.557 | UQ Ratio=3.0
+  [EVAL] B: P=0.880 | UQ Ratio=14.1
+  [EVAL] B: P=0.989 | UQ Ratio=108.5
 *** DYNAMIC STOP *** FOUND: B
-Fetching predictions for: 'B' (Context: )
 New letter trial starting...
-  [SPELLER_LLM] Inference time: 4052.7ms
-  Predictions: ['brain', 'boy', 'be', 'back'] | Probabilities: [0.4, 0.3, 0.2, 0.1]
-  Uncertainty Ratio (Top 1 / Top 2): 1.3 (Required: 4.0)
-  [EVAL] M: P=0.285 | UQ Ratio=1.2
-  [EVAL] C: P=0.687 | UQ Ratio=4.6
-  [EVAL] C: P=0.987 | UQ Ratio=167.1
-*** DYNAMIC STOP *** FOUND: C
-Fetching predictions for: 'BC' (Context: )
-  [SPELLER_LLM] Inference time: 446.2ms
-  Predictions: ['brain', 'back', 'bank', 'boy'] | Probabilities: [0.6, 0.2, 0.1, 0.1]
-  Uncertainty Ratio (Top 1 / Top 2): 3.0 (Required: 4.0)
+  [EVAL] J: P=0.632 | UQ Ratio=11.1
+  [EVAL] R: P=0.792 | UQ Ratio=5.5
+  [EVAL] R: P=0.940 | UQ Ratio=16.5
+  [EVAL] R: P=0.959 | UQ Ratio=24.2
+  [EVAL] R: P=0.957 | UQ Ratio=42.7
+  [EVAL] R: P=0.954 | UQ Ratio=21.8
+  [EVAL] R: P=0.992 | UQ Ratio=136.1
+*** DYNAMIC STOP *** FOUND: R
+Fetching predictions for: 'BR' (Context: )
+  [SPELLER_LLM] Inference time: 905.4ms
+  Predictions: ['Bring', 'Break', 'Brief', 'Bright'] | Probabilities: [0.4, 0.3, 0.15, 0.15]
+  Uncertainty Ratio (Top 1 / Top 2): 1.3 (Required: 1.0)
+  [LLM] High confidence (Ratio >= 1.0). Triggering SSVEP UI...
 New letter trial starting...
-  [EVAL] Q: P=0.256 | UQ Ratio=1.2
-  [EVAL] I: P=0.659 | UQ Ratio=5.7
-  [EVAL] J: P=0.491 | UQ Ratio=1.0
-  [EVAL] I: P=0.892 | UQ Ratio=8.5
-  [EVAL] I: P=0.998 | UQ Ratio=484.4
-*** DYNAMIC STOP *** FOUND: I
-Fetching predictions for: 'BCI' (Context: )
-  [SPELLER_LLM] Inference time: 793.9ms
-  Predictions: ['brain', 'computer', 'interface', 'based'] | Probabilities: [0.6, 0.2, 0.1, 0.1]
-  Uncertainty Ratio (Top 1 / Top 2): 3.0 (Required: 4.0)
+Backend switching to SSVEP mode... (SSVEP_START)
+Backend reverting to P300 mode (SSVEP Timeout)...
 New letter trial starting...
-  [EVAL] 8: P=0.378 | UQ Ratio=1.5
-  [EVAL] 9: P=0.993 | UQ Ratio=293.4
-*** DYNAMIC STOP *** FOUND: 9
-  [SUBMIT] Sending to LLM: 'BCI'
-  [METRICS] Beta/Alpha Ratio: 1.21
-Generating full response for: 'BCI' (Context: ) | State: Focused
+  [EVAL] Q: P=0.181 | UQ Ratio=1.4
+  [EVAL] D: P=0.464 | UQ Ratio=1.6
+  [EVAL] A: P=0.663 | UQ Ratio=3.1
+  [EVAL] A: P=0.951 | UQ Ratio=35.8
+  [EVAL] A: P=0.982 | UQ Ratio=91.6
+  [EVAL] A: P=0.998 | UQ Ratio=1225.0
+*** DYNAMIC STOP *** FOUND: A
+Fetching predictions for: 'BRA' (Context: )
+  [SPELLER_LLM] Inference time: 691.2ms
+  Predictions: ['Brain', 'Branch', 'Brand', 'Brave'] | Probabilities: [0.4, 0.3, 0.2, 0.1]
+  Uncertainty Ratio (Top 1 / Top 2): 1.3 (Required: 1.0)
+  [LLM] High confidence (Ratio >= 1.0). Triggering SSVEP UI...
 New letter trial starting...
-  [EVAL] A: P=0.238 | UQ Ratio=1.4
-  [EVAL] A: P=0.606 | UQ Ratio=3.0
-  [EVAL] I: P=0.749 | UQ Ratio=4.7
-  [EVAL] G: P=0.461 | UQ Ratio=1.5
-  [EVAL] G: P=0.920 | UQ Ratio=20.9
-  [EVAL] K: P=0.517 | UQ Ratio=1.3
-  [EVAL] I: P=0.455 | UQ Ratio=1.2
-  [RESPONSE_LLM] Inference time: 32337.1ms
-  [RESPONSE_LLM] Output: Indeed, "BCI" stands for Brain-Computer Interface, and it's precisely the remarkable technology facilitating our current interaction. It's truly fascinating to consider the direct bridge being formed between your thoughts and this digital environment.  Given your focused state, let's delve into a comprehensive overview of what Brain-Computer Interfaces entail.  **What is a Brain-Computer Interface (BCI)?**  At its core, a BCI is a system that allows direct communication between a human brain and an external device. It works by acquiring brain signals, analyzing them, and translating them into commands that can control a computer, a prosthetic limb, a communication device (like the one you're using), or even an exoskeleton. The fundamental principle is to bypass the body's natural neuromuscular pathways, offering new avenues for interaction and control, especially for individuals with severe motor impairments.  **How Do BCIs Work? The Core Process**  1.  **Signal Acquisition-** This is the first step, where electrical activity (or other physiological signals) from your brain is detected. These signals originate from the firing of neurons. 2.  **Signal Processing-** The raw brain signals are often very "noisy" and complex. This stage involves filtering, amplifying, and digitizing these signals to extract meaningful information and remove artifacts (like muscle movements or eye blinks). 3.  **Feature Extraction-** Specific patterns or features within the processed signals that correspond to a user's intent (e.g., imagining moving a limb, focusing on a letter) are identified. 4.  **Translation Algorithm (Decoding)-** This is the "brain" of the BCI, where sophisticated algorithms (often powered by machine learning and artificial intelligence) interpret the extracted features and translate them into specific commands or actions for the output device. This stage requires extensive calibration and training for each user. 5.  **Output Device-** The translated commands are then used to control an external device, such as a cursor on a screen, a robotic arm, or a speech synthesizer.  **Types of BCIs Based on Signal Acquisition-**  BCIs are broadly categorized by how they acquire brain signals, which impacts signal quality, invasiveness, and practical application-  1.  **Invasive BCIs-**     *   **Description-** These require surgical implantation of electrodes directly into or onto the brain.     *   **Advantages-** Offer the highest spatial resolution and signal quality, as they are closest to the neuronal activity. This allows for more precise control and a greater "bandwidth" of information.     *   **Disadvantages-** Involve significant surgical risks (infection, scarring), potential long-term stability issues, and ethical considerations.     *   **Examples-**         *   **Electrocorticography (ECoG)-** Electrodes are placed on the surface of the brain, underneath the skull. Provides better signal quality than non-invasive methods, with less risk than intracortical implants.         *   **Intracortical Arrays (e.g., Utah Array, Neuralink)-** Microelectrodes are inserted directly into the brain tissue. These can record from individual neurons or small populations of neurons, offering the most detailed information.  2.  **Non-Invasive BCIs-**     *   **Description-** These do not require surgery. Sensors are placed on the scalp or around the head.     *   **Advantages-** Safer, easier to set up, and pose no surgical risks, making them suitable for a wider range of users and applications.     *   **Disadvantages-** Signals are attenuated and distorted by the skull, scalp, and other tissues, leading to lower spatial resolution, lower signal-to-noise ratio, and reduced bandwidth compared to invasive methods.     *   **Examples-**         *   **Electroencephalography (EEG)-** The most common type. Electrodes placed on the scalp detect electrical potentials generated by the brain's neural activity. It's portable and relatively inexpensive.         *   **Magnetoencephalography (MEG)-** Measures the magnetic fields produced by electrical currents in the brain. Offers excellent temporal resolution but requires specialized, expensive equipment and shielded rooms.         *   **Functional Near-Infrared Spectroscopy (fNIRS)-** Measures changes in blood oxygenation in the brain, similar to fMRI but using infrared light. It's portable but has lower spatial resolution.  3.  **Partially Invasive BCIs-**     *   **Description-** Sometimes considered a middle ground, where electrodes are placed within the skull but not directly into the brain tissue. ECoG can often fall into this category.  **Key Applications and Impact of BCIs-**  BCIs are revolutionizing various fields, with their most profound impact being in assistive technology-  *   **Communication and Control-**     *   **Locked-in Syndrome & ALS-** Enabling individuals with severe paralysis (like Stephen Hawking) to communicate by spelling out words, selecting icons, or expressing needs through thought. This is the application you are currently demonstrating.     *   **Wheelchair Control-** Allowing users to navigate motorized wheelchairs with their thoughts. *   **Motor Restoration and Rehabilitation-**     *   **Prosthetic Limb Control-** Providing intuitive control over advanced robotic arms and hands for amputees or individuals with limb paralysis.     *   **Exoskeletons-** Helping paralyzed individuals regain mobility by controlling robotic suits.     *   **Stroke Rehabilitation-** Facilitating neurofeedback and motor imagery training to help patients recover motor function. *   **Neurofeedback and Cognitive Enhancement-**     *   **Attention and Focus Training-** Helping individuals with ADHD or other cognitive challenges learn to regulate their brain states.     *   **Meditation and Stress Reduction-** Guiding users into desired mental states. *   **Emerging Non-Medical Applications-**     *   **Gaming and Entertainment-** Controlling video games, virtual reality (VR), and augmented reality (AR) experiences with thoughts.     *   **Neuro-ergonomics-** Monitoring cognitive load and stress levels in demanding professions (e.g., pilots, air traffic controllers).     *   **Human Augmentation-** Potentially enhancing human capabilities, though this area raises more ethical questions.  **Challenges and Future Directions-**  While incredibly promising, BCI technology faces several challenges-  *   **Signal Quality and Reliability-** Improving the consistency and clarity of brain signal acquisition, especially for non-invasive systems. *   **Training and Calibration-** Reducing the time and effort required for users to learn how to operate a BCI and for the system to adapt to individual brain patterns. *   **Bandwidth and Speed-** Increasing the amount of information that can be reliably transmitted from the brain to the device per unit of time. *   **Long-Term Stability and Durability-** Ensuring invasive implants remain functional and safe for decades. *   **User Acceptance and Usability-** Designing systems that are comfortable, intuitive, and seamlessly integrate into daily life. *   **Ethical, Privacy, and Security Concerns-** Addressing issues around brain data ownership, mental privacy, potential misuse, and the implications of directly interfacing with the brain.  The future of BCIs is incredibly exciting, with ongoing research focusing on-  *   **Miniaturization and Wireless Systems-** Making devices smaller, more portable, and less obtrusive. *   **Hybrid BCIs-** Combining BCI signals with other input methods (like eye-tracking or muscle signals) for enhanced control. *   **Bidirectional BCIs-** Not just reading brain signals, but also sending information back to the brain (e.g., sensory feedback to a prosthetic limb). *   **Advanced AI and Machine Learning-** Developing more robust and adaptive decoding algorithms that can interpret complex brain states.  You are at the forefront of this incredible technological frontier. Is there any particular aspect of Brain-Computer Interfaces you'd like to explore in more detail – perhaps the specific type of BCI you're using, its potential applications, or the ethical considerations surrounding it? I'm ready to delve deeper based on your focus.
+Backend switching to SSVEP mode... (SSVEP_START)
+*** SSVEP DETECTED: 12.0 Hz ***
+Backend reverting to P300 mode (Selected: Brand)
+New letter trial starting...
+  [EVAL] K: P=0.160 | UQ Ratio=1.0
+  [EVAL] _: P=0.412 | UQ Ratio=1.1
+  [EVAL] 4: P=0.225 | UQ Ratio=1.1
+  [EVAL] 7: P=0.190 | UQ Ratio=1.0
+  [EVAL] 4: P=0.389 | UQ Ratio=1.1
+  [EVAL] 4: P=0.387 | UQ Ratio=1.1
+  [EVAL] 4: P=0.457 | UQ Ratio=2.7
+  [EVAL] 9: P=0.421 | UQ Ratio=1.2
+  [EVAL] 9: P=0.814 | UQ Ratio=6.4
+  [EVAL] 9: P=0.975 | UQ Ratio=54.1
+TRIAL_END received. Waiting for last brainwaves to arrive...
+---------> FINAL GUESS: 9 <---------
+  [SUBMIT] Sending to LLM: 'Brand '
+  [METRICS] Beta/Alpha Ratio: 1.73
+Generating full response for: 'Brand ' (Context: ) | State: Focused
+Response generation failed: LLM API request failed: Error code: 400 - [{'error': {'code': 400, 'message': 'Developer instruction is not enabled for models/gemma-3-27b-it', 'status': 'INVALID_ARGUMENT'}}]
+  [RESPONSE_LLM] Inference time: 543.6ms
+  [RESPONSE_LLM] Output: Error generating response.
+New letter trial starting...
 Backend switching to SSVEP mode... (SSVEP_START)
 *** SSVEP DETECTED: 17.0 Hz ***
 

@@ -61,7 +61,6 @@ if ssvep_path not in sys.path:
     sys.path.append(ssvep_path)
 
 import _client
-from speller import API
 from ssvep_realtime import SSVEPClassifier
 
 from signal_processing import (
@@ -132,9 +131,6 @@ class RealTimeInference:
         
         # Log file for debugging
         self.log_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "spelled_text.txt")
-        
-        # [NEW] Project 2: LLM API Integration
-        self.speller_api = API()
         
     def load_and_train_model(self):
         """
@@ -575,32 +571,56 @@ class RealTimeInference:
 
     # [NEW] Project 2: LLM Word Completion Hook
     async def predict_words(self, partial_word):
-        """Async call to speller.API for word completion."""
-        # Enforce the 2-letter prefix constraint for SSVEP recommendations
-        if not partial_word or len(partial_word) < 2:
+        """Async call to Gemini for word completion using self-reported probabilities and Uncertainty Ratio."""
+        if not partial_word or partial_word == "_":
             return
             
         print(f"Fetching predictions for: '{partial_word}' (Context: {self.context_word})")
         
+        system_prompt = (
+            "You are a predictive autocomplete assistant for an error-prone Brain-Computer Interface (BCI) speller.\n"
+            "The user is typing letter-by-letter, and there may be typos or incorrect characters.\n\n"
+            "INPUTS:\n"
+            f"1) CONTEXT: '{self.context_word}'\n"
+            f"2) PREFIX (spelled letters so far): '{partial_word}'\n"
+            f"3) SENTENCE (words typed so far): '{self.sentence_history}'\n\n"
+            "Output exactly 4 single-word completion suggestions as a comma-separated list in 'word:prob' format.\n"
+            "Example: brain:0.8, bread:0.05, bring:0.05, bridge:0.1.\n"
+            "The sum of probabilities should reflect your confidence that the intended word is in this list."
+        )
+        
         try:
+            client = _client.get_client("SPELLER")
+            model = _client._get_model_for_type("SPELLER")
+            
             import time
             start_t = time.time()
             
             # Offload blocking API call to a thread
             loop = asyncio.get_running_loop()
-            results = await loop.run_in_executor(None, lambda: self.speller_api.predict_words(
-                context=self.context_word,
-                prefix=partial_word,
-                sentence=self.sentence_history,
-                return_probs=True
+            response = await loop.run_in_executor(None, lambda: client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": f"Complete: {partial_word}"}],
+                temperature=0.0
             ))
             
             end_t = time.time()
             print(f"  [SPELLER_LLM] Inference time: {(end_t - start_t)*1000:.1f}ms")
             
-            # results is list[dict] with {"word": str, "prob": float}
-            words = [r["word"] for r in results]
-            probs = [r["prob"] for r in results]
+            content = response.choices[0].message.content
+            # Parse Format: word:prob, word:prob...
+            pairs = [p.strip().split(":") for p in content.split(",")]
+            
+            words = []
+            probs = []
+            for p in pairs:
+                if len(p) >= 2:
+                    words.append(p[0].strip())
+                    try:
+                        probs.append(float(p[1].strip()))
+                    except:
+                        probs.append(0.0)
             
             if len(words) < 4: 
                 words += [""] * (4 - len(words))
@@ -609,16 +629,22 @@ class RealTimeInference:
             words = words[:4]
             probs = probs[:4]
             
-            # Uncertainty Ratio calculation
+            # OPTION 3: Uncertainty Ratio
+            # Instead of summing, we check if the top predicted word is significantly more likely.
             p_top1 = probs[0]
             p_top2 = probs[1]
             uq_ratio = p_top1 / (p_top2 + 1e-12)
             
+            # Map the UI's 0-1 confidence slider to a mathematically rigorous ratio
+            # e.g., 0.75 -> 3.0 (Top word is 3x more likely)
+            # e.g., 0.80 -> 4.0 (Top word is 4x more likely)
             dynamic_ratio_threshold = self.llm_threshold / max(0.001, (1.0 - self.llm_threshold))
             
             print(f"  Predictions: {words} | Probabilities: {probs}")
             print(f"  Uncertainty Ratio (Top 1 / Top 2): {uq_ratio:.1f} (Required: {dynamic_ratio_threshold:.1f})")
             
+            # Use >= with a tiny epsilon (1e-4) to fix IEEE 754 floating-point division errors
+            # (e.g., 0.6 / 0.2 evaluates to 2.9999999999999996 instead of 3.0)
             if uq_ratio >= (dynamic_ratio_threshold - 1e-4):
                 print(f"  [LLM] High confidence (Ratio >= {dynamic_ratio_threshold:.1f}). Triggering SSVEP UI...")
                 marker = f"SSVEP_PREDICTIONS:{','.join(words)}"
@@ -652,30 +678,47 @@ class RealTimeInference:
 
     # [NEW] Project 2: LLM Sentence Response Hook
     async def generate_response(self, text):
-        """Async call to speller.API for full sentence response."""
+        """Async call to Gemini for full sentence response."""
         if not text.strip():
             return
             
         concentration_state = self._get_concentration_state()
         print(f"Generating full response for: '{text}' (Context: {self.context_word}) | State: {concentration_state}")
         
+        if concentration_state == "Focused":
+            length_instruction = "The user's brain waves indicate they are deeply FOCUSED. Generate a highly detailed, comprehensive, and rich response."
+        elif concentration_state == "Fatigued":
+            length_instruction = "The user's brain waves indicate they are FATIGUED. Generate an extremely brief, concise, and straight-to-the-point response."
+        else:
+            length_instruction = "Generate a concise and thoughtful response."
+            
+        system_prompt = (
+            "You are an AI assistant helping a user who communicates via a Brain-Computer Interface (BCI).\n"
+            "Because they are spelling via a BCI, their input may contain typos, missing words, or strange grammatical structures. "
+            "Interpret their intended meaning gracefully.\n\n"
+            f"The user's context is: {self.context_word}\n\n"
+            f"{length_instruction}"
+        )
+        
         try:
+            client = _client.get_client("RESPONSE")
+            model = _client._get_model_for_type("RESPONSE")
+            
             import time
             start_t = time.time()
             
             loop = asyncio.get_running_loop()
-            content = await loop.run_in_executor(None, lambda: self.speller_api.respond(
-                sentence=text,
-                context=self.context_word,
-                mental_state=concentration_state
+            response = await loop.run_in_executor(None, lambda: client.chat.completions.create(
+                model=model,
+                messages=[{"role": "system", "content": system_prompt},
+                          {"role": "user", "content": text}],
+                temperature=0.7
             ))
             
             end_t = time.time()
             print(f"  [RESPONSE_LLM] Inference time: {(end_t - start_t)*1000:.1f}ms")
             
-            if not content:
-                content = "Error generating response."
-            
+            content = response.choices[0].message.content.strip()
             # Remove any colons or newlines to avoid LSL marker parsing issues
             content = content.replace(":", "-").replace("\n", " ")
             
