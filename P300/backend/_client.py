@@ -80,17 +80,19 @@ def _get_model_for_type(llm_type: str = "SPELLER") -> str:
 
 def get_response(
     client: OpenAI,
-    system_prompt: str,
-    user_message: str,
+    system_prompt: str = "",
+    user_message: str = "",
     llm_type: str | None = None,
+    messages: list[dict] | None = None,
 ) -> str:
-    """Call an LLM with system prompt and user message.
+    """Call an LLM with system prompt and user message, or a full message list.
 
     Args:
         client: OpenAI client to use.
-        system_prompt: System context for the model.
-        user_message: User input to respond to.
+        system_prompt: System context for the model (ignored if messages provided).
+        user_message: User input to respond to (ignored if messages provided).
         llm_type: Which model to use (SPELLER or RESPONSE). If None, uses SPELLER.
+        messages: Optional pre-built messages list (for conversation history).
 
     Returns:
         The model's response text.
@@ -99,10 +101,11 @@ def get_response(
         llm_type = "SPELLER"
     model = _get_model_for_type(llm_type)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
+    if messages is None:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ]
 
     try:
         response = client.chat.completions.create(
@@ -121,8 +124,17 @@ def get_response(
         # Retry with the system prompt merged into the user message.
         if "Developer instruction is not enabled" in err_str or "system" in err_str.lower() and "not supported" in err_str.lower():
             try:
-                merged_message = f"Instructions: {system_prompt}\n\n{user_message}"
-                fallback_messages = [{"role": "user", "content": merged_message}]
+                # Merge system into first user message for fallback
+                merged = ""
+                user_parts = []
+                for m in messages:
+                    if m["role"] == "system":
+                        merged = m["content"]
+                    else:
+                        user_parts.append(m)
+                if merged and user_parts:
+                    user_parts[0] = {"role": "user", "content": f"Instructions: {merged}\n\n{user_parts[0]['content']}"}
+                fallback_messages = user_parts if user_parts else [{"role": "user", "content": merged}]
                 response = client.chat.completions.create(
                     model=model,
                     messages=fallback_messages,
@@ -132,3 +144,4 @@ def get_response(
             except Exception as fallback_e:
                 raise RuntimeError(f"LLM API request failed (fallback also failed): {fallback_e}") from fallback_e
         raise RuntimeError(f"LLM API request failed: {e}") from e
+

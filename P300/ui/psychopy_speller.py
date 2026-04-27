@@ -3,6 +3,9 @@ import random
 import types
 import numpy as np
 import math
+import re
+import threading
+import time as _time
 
 # Apply NumPy 2.0 backward compatibility monkey-patch for PsychoPy 2023
 if not hasattr(np, 'alltrue'): np.alltrue = np.all
@@ -114,8 +117,9 @@ def main():
     
     # Updated Project 2 Config Dialog
     exp_info = {
+        '00. Input Mode': ['Keyboard Mode', 'EEG Mode'],
         '01. System Mode': ['Project 2: LLM Speller', 'Standalone Training'],
-        '02. Keyboard Mode': ['2: Checkerboard (CBP)', '1: Row-Column (RCP)'],
+        '02. Flash Paradigm': ['2: Checkerboard (CBP)', '1: Row-Column (RCP)'],
         '03. LLM Trigger Conf (0-1)': '0.8',
         '04. SSVEP Timeout (s)': '15',
         '05. Target Word (Training Only)': 'NEUROTECH',
@@ -132,8 +136,9 @@ def main():
     
     try:
         # Map human-readable names to internal logic
+        args.keyboard_mode = (exp_info['00. Input Mode'] == 'Keyboard Mode')
         args.inference = (exp_info['01. System Mode'] == 'Project 2: LLM Speller')
-        args.mode = 2 if 'Checkerboard' in exp_info['02. Keyboard Mode'] else 1
+        args.mode = 2 if 'Checkerboard' in exp_info['02. Flash Paradigm'] else 1
         args.llm_threshold = float(exp_info['03. LLM Trigger Conf (0-1)'])
         args.ssvep_timeout = float(exp_info['04. SSVEP Timeout (s)'])
         args.word = exp_info['05. Target Word (Training Only)']
@@ -146,10 +151,13 @@ def main():
         dlg2.show()
         core.quit()
 
-    # Create the LSL Marker Outlet
-    print("Initializing LSL Marker Outlet...")
-    info = pylsl.StreamInfo('Speller_Markers', 'Markers', 1, 0, 'string', 'psychopy_v1')
-    outlet = pylsl.StreamOutlet(info)
+    if not args.keyboard_mode:
+        # Create the LSL Marker Outlet
+        print("Initializing LSL Marker Outlet...")
+        info = pylsl.StreamInfo('Speller_Markers', 'Markers', 1, 0, 'string', 'psychopy_v1')
+        outlet = pylsl.StreamOutlet(info)
+    else:
+        outlet = None
 
     # Initialize Window explicitly requesting FullScreen and locking V-Sync
     # This must happen BEFORE subprocess creation, otherwise Pyglet loses foreground focus 
@@ -157,48 +165,49 @@ def main():
     win = visual.Window(size=[1280, 720], fullscr=True, allowGUI=False, 
                         color=BG_COLOR, units='norm', waitBlanking=True, checkTiming=False)
 
-    # --- AUTO-LAUNCH BACKEND ---
-    import subprocess
-    import sys
-    import os
-    
-    ui_dir = os.path.dirname(os.path.abspath(__file__))
-    backend_dir = os.path.join(os.path.dirname(ui_dir), "backend")
-    backend_script = os.path.join(backend_dir, "realtime_inference.py" if args.inference else "data_collection.py")
-    
-    # Resolve the real Python interpreter — PsychoPy Runner sets sys.executable
-    # to its own launcher (e.g., psychopy.exe), not the actual python.exe.
-    # We need the raw interpreter to launch backend scripts as subprocesses.
-    _exe_dir = os.path.dirname(sys.executable)
-    _python_exe = os.path.join(_exe_dir, "python.exe")
-    if not os.path.isfile(_python_exe):
-        _python_exe = sys.executable  # Fallback
-    
-    print(f"Auto-launching Backend: {backend_script}")
-    try:
-        # Launch backend. Path/dependency fixes are handled inside the backend scripts.
-        subprocess.Popen([_python_exe, backend_script])
+    if not args.keyboard_mode:
+        # --- AUTO-LAUNCH BACKEND ---
+        import subprocess
+        import sys
+        import os
         
-        # Adaptive handshake: poll for backend's LSL stream instead of hardcoded wait.
-        # For inference mode, wait until Speller_Decoded stream appears (model trained).
-        # For training mode, wait until data_collection.py has resolved its streams.
-        if args.inference:
-            print("Waiting for backend to train models and publish Speller_Decoded stream...")
-            max_wait = 30  # seconds — generous ceiling for model training
-            for i in range(max_wait):
-                handshake = pylsl.resolve_byprop('name', 'Speller_Decoded', 1, 1.0)
-                if handshake:
-                    print(f"Backend ready! Handshake completed in {i+1} seconds.")
-                    break
-                print(f"  Still waiting... ({i+1}/{max_wait}s)")
+        ui_dir = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.join(os.path.dirname(ui_dir), "backend")
+        backend_script = os.path.join(backend_dir, "realtime_inference.py" if args.inference else "data_collection.py")
+        
+        # Resolve the real Python interpreter — PsychoPy Runner sets sys.executable
+        # to its own launcher (e.g., psychopy.exe), not the actual python.exe.
+        # We need the raw interpreter to launch backend scripts as subprocesses.
+        _exe_dir = os.path.dirname(sys.executable)
+        _python_exe = os.path.join(_exe_dir, "python.exe")
+        if not os.path.isfile(_python_exe):
+            _python_exe = sys.executable  # Fallback
+        
+        print(f"Auto-launching Backend: {backend_script}")
+        try:
+            # Launch backend. Path/dependency fixes are handled inside the backend scripts.
+            subprocess.Popen([_python_exe, backend_script])
+            
+            # Adaptive handshake: poll for backend's LSL stream instead of hardcoded wait.
+            # For inference mode, wait until Speller_Decoded stream appears (model trained).
+            # For training mode, wait until data_collection.py has resolved its streams.
+            if args.inference:
+                print("Waiting for backend to train models and publish Speller_Decoded stream...")
+                max_wait = 30  # seconds — generous ceiling for model training
+                for i in range(max_wait):
+                    handshake = pylsl.resolve_byprop('name', 'Speller_Decoded', 1, 1.0)
+                    if handshake:
+                        print(f"Backend ready! Handshake completed in {i+1} seconds.")
+                        break
+                    print(f"  Still waiting... ({i+1}/{max_wait}s)")
+                else:
+                    print(f"WARNING: Backend did not publish Speller_Decoded within {max_wait}s. Proceeding anyway.")
             else:
-                print(f"WARNING: Backend did not publish Speller_Decoded within {max_wait}s. Proceeding anyway.")
-        else:
-            # Training mode: backend just needs to resolve LSL streams, which is fast
-            print("Waiting 3 seconds for data collection backend to initialize...")
-            core.wait(3.0)
-    except Exception as e:
-        print(f"Failed to auto-start backend: {e}")
+                # Training mode: backend just needs to resolve LSL streams, which is fast
+                print("Waiting 3 seconds for data collection backend to initialize...")
+                core.wait(3.0)
+        except Exception as e:
+            print(f"Failed to auto-start backend: {e}")
                         
     # Setup grid spacing
     grid_stims = []
@@ -233,7 +242,8 @@ def main():
     if frames_flash_off < 1: frames_flash_off = 1
 
     def draw_all():
-        if current_state in ["CONTEXT_P300", "MAIN_SPELLER"]:
+        if current_state in ["CONTEXT_P300", "MAIN_SPELLER",
+                              "KB_LOADING_PRED", "KB_LOADING_RESP"]:
             for row in grid_stims:
                 for stim in row:
                     stim.draw()
@@ -280,7 +290,8 @@ def main():
         # Flip #1 (0ms onset)
         win.flip()
         # Push marker immediately using native LSL clock to guarantee exact Unicorn sync
-        outlet.push_sample([marker_str], pylsl.local_clock())
+        if outlet:
+            outlet.push_sample([marker_str], pylsl.local_clock())
         
         # Hold ON state for duration (already completed 1 frame via the flip above)
         for _ in range(frames_flash_on - 1):
@@ -354,7 +365,236 @@ def main():
         auto_bg_plates.append(bg)
         auto_labels.append(lbl)
 
-    if args.inference:
+    # ══════════════════════════════════════════════════════════════════════
+    # KEYBOARD MODE — identical visuals to EEG mode, keyboard selection
+    # ══════════════════════════════════════════════════════════════════════
+    if args.keyboard_mode:
+        import os as _os, sys as _sys
+        _ui_dir = _os.path.dirname(_os.path.abspath(__file__))
+        _backend_dir = _os.path.join(_os.path.dirname(_ui_dir), "backend")
+        _project_root = _os.path.dirname(_os.path.dirname(_ui_dir))
+        from dotenv import load_dotenv as _ldenv
+        _ldenv(_os.path.join(_project_root, ".env"))
+        _sys.path.insert(0, _backend_dir)
+        from speller import predict_words as _predict, respond_to_sentence as _respond
+
+        # 4 SSVEP prediction boxes (2×2 grid) with real flickering
+        ssvep_freqs_pred = [10.0, 12.0, 15.0, 8.57]
+        _pred_pos = [(-400, 200), (400, 200), (-400, -200), (400, -200)]
+        _pred_boxes, _pred_bgs, _pred_lbls = [], [], []
+        for i in range(4):
+            bx = visual.Rect(win, width=350, height=300, pos=_pred_pos[i],
+                             fillColor=[1,1,1], lineColor=[0,0.72,0.66],
+                             lineWidth=4, units='pix')
+            bg = visual.Rect(win, width=340, height=100, pos=_pred_pos[i],
+                             fillColor=[-0.85,-0.85,-0.85], units='pix')
+            lb = visual.TextStim(win, text='', pos=_pred_pos[i],
+                                 color=[1,1,1], height=50, bold=True,
+                                 units='pix', wrapWidth=320)
+            _pred_boxes.append(bx); _pred_bgs.append(bg)
+            _pred_lbls.append(lb)
+
+        # SSVEP Continue button — flickering box like a real SSVEP target
+        _continue_freq = 12.0
+        _continue_box = visual.Rect(win, width=500, height=120, pos=(0, -300),
+                                    fillColor=[1,1,1], lineColor=[0,0.72,0.66],
+                                    lineWidth=4, units='pix')
+        _continue_lbl = visual.TextStim(win, text='Continue',
+                                        pos=(0, -300), color=[-1,-1,-1],
+                                        height=50, bold=True, units='pix')
+        _valid_chars = [c for row in matrixChars for c in row]
+        _kb_api_res = [None]
+        _kb_api_ok = [False]
+
+        def _kb_predict(pfx, sent, ctx):
+            _kb_api_ok[0] = False; _kb_api_res[0] = None
+            def _w():
+                try:
+                    r = _predict(prefix=pfx, sentence=sent, context=ctx)
+                    _kb_api_res[0] = [str(w).strip() for w in r
+                                      if re.match(r'^[A-Za-z\'\-]{1,20}$', str(w).strip())][:4]
+                except Exception as e:
+                    print(f"[PREDICT ERR] {e}"); _kb_api_res[0] = []
+                _kb_api_ok[0] = True
+            threading.Thread(target=_w, daemon=True).start()
+
+        def _kb_respond(sent, ctx):
+            _kb_api_ok[0] = False; _kb_api_res[0] = None
+            def _w():
+                try: _kb_api_res[0] = _respond(sentence=sent, context=ctx)
+                except Exception as e:
+                    print(f"[RESP ERR] {e}"); _kb_api_res[0] = f"Error: {e}"
+                _kb_api_ok[0] = True
+            threading.Thread(target=_w, daemon=True).start()
+
+        kb_resp = ""
+        while True:
+            if event.getKeys(keyList=['escape']): break
+            t = core.getTime()
+
+            # ── CONTEXT_SSVEP: flickering boxes ──
+            if current_state == "CONTEXT_SSVEP":
+                instruction.setText("SSVEP: Choose Context Mode")
+                for i, freq in enumerate(ssvep_freqs_context):
+                    if math.sin(2 * math.pi * freq * t) > 0:
+                        ctx_boxes[i].draw()
+                        ctx_labels[i].draw()
+                instruction.draw()
+                win.flip()
+                keys = event.getKeys(keyList=['1', '2'])
+                if '1' in keys:
+                    current_state = "CONTEXT_P300"
+                    instruction.setText("P300: Spell Context Word...")
+                    state_start_time = core.getTime()
+                elif '2' in keys:
+                    current_state = "MAIN_SPELLER"
+                    instruction.setText("P300: Spell Word (No Context)")
+                    state_start_time = core.getTime()
+
+            # ── P300 SPELLER: real flashing, keyboard char selection ──
+            elif current_state in ["CONTEXT_P300", "MAIN_SPELLER"]:
+                # 3-second preparation
+                for _ in range(int(3.0 * args.fps)):
+                    draw_all(); win.flip()
+                    if event.getKeys(keyList=['escape']): break
+
+                # Flash blocks — IDENTICAL visual to EEG mode
+                char_found = None
+                for b in range(args.blocks):
+                    if char_found: break
+                    seq = generate_flash_sequence(args.mode, None)
+                    for group in seq:
+                        exec_flash(group, None)
+                        keys = event.getKeys()
+                        for k in keys:
+                            ku = k.upper()
+                            if ku == 'ESCAPE': win.close(); core.quit()
+                            if ku == 'SPACE': ku = '_'
+                            if ku in _valid_chars:
+                                char_found = ku; break
+                        if char_found: break
+
+                # Process character — same logic as EEG mode
+                if char_found:
+                    if current_state == "CONTEXT_P300":
+                        if char_found == "_":
+                            current_state = "MAIN_SPELLER"
+                            context_label.setText("")
+                            instruction.setText("P300: Spell Word")
+                        elif char_found == "8":
+                            current_context = current_context[:-1]
+                        elif char_found == "9":
+                            pass
+                        else:
+                            current_context += char_found
+                        if current_state == "CONTEXT_P300":
+                            instruction.setText(f"Context: {current_context}")
+                    else:
+                        if char_found == "8":
+                            if undo_stack_ui: current_spelled = undo_stack_ui.pop()
+                        elif char_found == "_":
+                            undo_stack_ui.append(current_spelled)
+                            current_spelled += " "
+                        elif char_found == "9":  # SUBMIT
+                            full = current_spelled.strip()
+                            if full:
+                                undo_stack_ui.append(current_spelled)
+                                _kb_respond(full, current_context.lower() if current_context else "")
+                                current_spelled = ""
+                                current_state = "KB_LOADING_RESP"
+                        else:
+                            undo_stack_ui.append(current_spelled)
+                            current_spelled += char_found
+                            # Trigger predictions after 2+ chars in current word
+                            parts = current_spelled.strip().split()
+                            cur_word = parts[-1] if parts else ""
+                            if len(cur_word) >= 2:
+                                _kb_predict(cur_word.lower(), " ".join(parts[:-1]),
+                                            current_context.lower() if current_context else "")
+                                current_state = "KB_LOADING_PRED"
+                        typed_text.setText(current_spelled)
+
+                # Ready period — same as EEG mode
+                if current_state in ["CONTEXT_P300", "MAIN_SPELLER"]:
+                    for row in grid_stims:
+                        for stim in row: stim.color = READY_COLOR
+                    for _ in range(int(3.0 * args.fps)):
+                        draw_all(); win.flip()
+                    for row in grid_stims:
+                        for stim in row: stim.color = DIM_COLOR
+
+            # ── Loading predictions ──
+            elif current_state == "KB_LOADING_PRED":
+                instruction.setText("Fetching word predictions...")
+                draw_all(); win.flip()
+                if _kb_api_ok[0]:
+                    autocomplete_words = _kb_api_res[0] or []
+                    if autocomplete_words:
+                        current_state = "AUTOCOMPLETE_SSVEP"
+                        state_start_time = core.getTime()
+                    else:
+                        current_state = "MAIN_SPELLER"
+
+            # ── AUTOCOMPLETE_SSVEP: flickering prediction boxes ──
+            elif current_state == "AUTOCOMPLETE_SSVEP":
+                n_words = min(len(autocomplete_words), 4)
+                for i in range(n_words):
+                    _pred_lbls[i].setText(autocomplete_words[i])
+                    freq = ssvep_freqs_pred[i]
+                    if math.sin(2 * math.pi * freq * t) > 0:
+                        _pred_boxes[i].draw()
+                        _pred_bgs[i].draw()
+                        _pred_lbls[i].draw()
+                instruction.setText("SSVEP: Select Word")
+                instruction.draw()
+                typed_text.draw()
+                win.flip()
+                if core.getTime() - state_start_time > args.ssvep_timeout:
+                    current_state = "MAIN_SPELLER"; state_start_time = core.getTime()
+                keys = event.getKeys(keyList=['1','2','3','4','backspace'])
+                for k in keys:
+                    if k in ('1','2','3','4'):
+                        idx = int(k) - 1
+                        if idx < n_words:
+                            selected = autocomplete_words[idx]
+                            undo_stack_ui.append(current_spelled)
+                            parts = current_spelled.strip().split()
+                            if parts: parts[-1] = selected
+                            else: parts = [selected]
+                            current_spelled = " ".join(parts) + " "
+                            typed_text.setText(current_spelled)
+                            current_state = "MAIN_SPELLER"
+                            state_start_time = core.getTime()
+                    elif k == 'backspace':
+                        current_state = "MAIN_SPELLER"; state_start_time = core.getTime()
+
+            # ── Loading response ──
+            elif current_state == "KB_LOADING_RESP":
+                instruction.setText("Generating AI response...")
+                draw_all(); win.flip()
+                if _kb_api_ok[0]:
+                    kb_resp = _kb_api_res[0] or "No response received."
+                    current_state = "LLM_RESPONSE_SCREEN"
+                    state_start_time = core.getTime()
+
+            # ── LLM Response: SSVEP Continue button ──
+            elif current_state == "LLM_RESPONSE_SCREEN":
+                llm_response_text.setText(kb_resp)
+                llm_response_text.draw()
+                if math.sin(2 * math.pi * _continue_freq * t) > 0:
+                    _continue_box.draw()
+                    _continue_lbl.draw()
+                instruction.setText("Reading response...")
+                instruction.draw()
+                win.flip()
+                keys = event.getKeys(keyList=['space', 'return'])
+                if keys:
+                    current_spelled = ""; typed_text.setText("")
+                    current_state = "MAIN_SPELLER"
+                    state_start_time = core.getTime()
+
+
+    elif args.inference:
         dec_inlet = None
         for i in range(40):
             streams = pylsl.resolve_byprop('name', 'Speller_Decoded', 1, 1.0)

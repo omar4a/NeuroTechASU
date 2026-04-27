@@ -123,6 +123,7 @@ class API:
         self.speller_client = get_client("SPELLER")
         self.response_client = get_client("RESPONSE")
         self._N_PREDICTIONS = prediction_count
+        self._conversation_history: list[dict] = []  # Accumulates across session
 
     # ------------------------------------------------------------------
     # Public interface
@@ -253,13 +254,23 @@ class API:
         user_message += "Please respond naturally and helpfully."
         
         try:
+            # Build messages: system + full conversation history + new user turn
+            messages = [{"role": "system", "content": system_prompt}]
+            messages.extend(self._conversation_history)
+            messages.append({"role": "user", "content": user_message})
+
             response = get_response(
                 self.response_client,
-                system_prompt=system_prompt,
-                user_message=user_message,
+                messages=messages,
                 llm_type="RESPONSE",
             )
-            return response.strip()
+            reply = response.strip()
+
+            # Append this exchange to history for future calls
+            self._conversation_history.append({"role": "user", "content": user_message})
+            self._conversation_history.append({"role": "assistant", "content": reply})
+
+            return reply
         except (ValueError, RuntimeError) as exc:
             logger.warning("Response generation failed: %s", exc)
             return ""
