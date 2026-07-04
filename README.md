@@ -1,23 +1,17 @@
-# NeuroTech ASU
+# NeuroTech Ain Shams University 🧠🌍
 
-Repository for NeuroTech ASU club projects focused on EEG signal processing and brain-computer interfaces.
+**First NeuroTechX student chapter in Africa & MENA.**
+Founded by Omar AbdAlAal at Ain Shams University (Sep 2025).
 
-## Signal Quality Algorithm
+## 🔬 Featured Projects
+- **[P300 BCI Speller](https://github.com/omar4a/p300-bci-speller):** Real-time EEG speller with PsychoPy.
+- **SSVEP 3D Universe Explorer:** Unity-based VR navigation via SSVEP signals.
+- **Motor Imagery Orthosis Hand:** Rehabilitative BCI for stroke patients.
+- **PhysioNet MI Dataset Analysis:** Deep dive into Motor Imagery classification.
 
-A real-time signal quality monitoring system for the Unicorn Hybrid Black EEG headset. This project provides live feedback on electrode contact quality to ensure optimal data collection during EEG experiments.
+## 🤝 Community & Outreach
+- Hosted the local hub for **g.tec Spring School & BR4IN.IO Hackathon**.
+- Conducted regular paper reviews, guest lectures, and undergraduate EEG workshops.
 
-### Features
-
-- Real-time monitoring of 8 EEG channels
-- Visual feedback with head diagram
-- Signal quality assessment based on voltage peaks, standard deviation, and offset
-- Integration with LSL streams
-- EEG filtering capabilities
-
-### Getting Started
-
-See [Signal Quality Algorithm/README.md](Signal Quality Algorithm/README.md) for detailed setup and usage instructions.
-
-## Contributing
-
-Contributions from ASU NeuroTech club members are welcome. Please follow standard git practices and ensure code is well-documented.
+## 🛠️ Technologies
+`Python` `MNE-Python` `PsychoPy` `Unity` `BrainFlow` `g.tec Unicorn`
