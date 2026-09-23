@@ -19,7 +19,7 @@ A live Tkinter head map for the raw Unicorn LSL stream. Each electrode is green 
 
 ### SSVEP (`SSVEP Protocol/`, `SSVEP Tryouts/`)
 - `ssvep_realtime.py`: real-time CCA decoding of 10 / 12 / 15 Hz targets with harmonics.
-- `ssvep_screening.py`, `ssvep_experiment.py`: pilot screening that measures each candidate's SNR per frequency at Oz (e.g. 12.3 at 10 Hz) and draws an aptitude topoplot, to pick operators for the hackathon's "explore the universe with your brain" project.
+- `ssvep_screening.py`, `ssvep_experiment.py`: pilot screening that measures each candidate's SNR per frequency at Oz (e.g. 12.3 at 10 Hz) and draws an aptitude topoplot.
 
 ### Research notes (`docs/research/`)
 Literature reviews on P300 speller performance and SSVEP algorithms, plus the hackathon project specifications.
