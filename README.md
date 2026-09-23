@@ -1,23 +1,28 @@
-# NeuroTech ASU
+# NeuroTech Ain Shams University
 
-Repository for NeuroTech ASU club projects focused on EEG signal processing and brain-computer interfaces.
+**The first NeuroTechX student chapter in Africa & MENA**, founded by Omar AbdAlAal at Ain Shams University in 2025 (50+ members). The chapter hosted the local hub of the **g.tec BCI Spring School & BR41N.IO hackathon (2026)**, runs EEG workshops and paper reviews, and builds real BCIs on the 8-channel **g.tec Unicorn Hybrid Black**.
 
-## Signal Quality Algorithm
+This repo is the chapter's shared lab bench. The polished, standalone versions live in their own repos.
 
-A real-time signal quality monitoring system for the Unicorn Hybrid Black EEG headset. This project provides live feedback on electrode contact quality to ensure optimal data collection during EEG experiments.
+## Projects
 
-### Features
+### P300 speller (`P300/`) → cleaned up in [p300-bci-speller](https://github.com/omar4a/p300-bci-speller)
+The full development history of the real-time brain-typing speller: data collection, offline evaluation and diagnostics.
+- `realtime_inference.py`, `signal_processing.py`: LSL decoder with a synthetic sample clock, ASR and Bayesian dynamic stopping.
+- `bci_classifiers.py`, `eegnet_classifier.py`, `evaluate_pipelines.py`: xDAWN+LDA, Riemannian MDM and EEGNet, compared offline.
+- `calibrate_epoch_timing.py`: sweeps the post-flash window (ROC-AUC vs. offset). `calibrate_bayesian_kde.py`: fits the score distributions used for evidence accumulation.
+- `simulate_realtime.py`: replays recorded sessions through the live decoder for reproducible debugging. `diagnose_*.py` + `diagnostics/`: per-session ERP plots.
+- `tests/test_p300_paradigm.py`: paradigm/stimulus tests.
 
-- Real-time monitoring of 8 EEG channels
-- Visual feedback with head diagram
-- Signal quality assessment based on voltage peaks, standard deviation, and offset
-- Integration with LSL streams
-- EEG filtering capabilities
+### Signal-quality monitor (`Signal Quality Algorithm/`)
+A live Tkinter head map for the raw Unicorn LSL stream. Each electrode is green or red, based on peak-to-peak range, variance and ADC-rail checks over a 1-second window. This was the prototype of the 5-check contact-quality engine that shipped in the [MindMetric app](https://github.com/omar4a/mindmetric-eeg-app).
 
-### Getting Started
+### SSVEP (`SSVEP Protocol/`, `SSVEP Tryouts/`)
+- `ssvep_realtime.py`: real-time CCA decoding of 10 / 12 / 15 Hz targets with harmonics.
+- `ssvep_screening.py`, `ssvep_experiment.py`: pilot screening that measures each candidate's SNR per frequency at Oz (e.g. 12.3 at 10 Hz) and draws an aptitude topoplot, to pick operators for the hackathon's "explore the universe with your brain" project.
 
-See [Signal Quality Algorithm/README.md](Signal Quality Algorithm/README.md) for detailed setup and usage instructions.
+### Research notes (`docs/research/`)
+Literature reviews on P300 speller performance and SSVEP algorithms, plus the hackathon project specifications.
 
-## Contributing
-
-Contributions from ASU NeuroTech club members are welcome. Please follow standard git practices and ensure code is well-documented.
+## Tech
+`Python` · `pylsl` · `pyRiemann` · `MNE` · `scikit-learn` · `PyTorch (EEGNet)` · `PsychoPy` · `Tkinter` · `g.tec Unicorn`
